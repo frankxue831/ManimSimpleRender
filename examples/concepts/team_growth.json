@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "title": "人多了，为何短期可能更慢？",
+  "font": "PingFang SC",
+  "nodes": [
+    {
+      "id": "old",
+      "label": "老成员\n推进原任务",
+      "x": -4,
+      "y": 1.1
+    },
+    {
+      "id": "work",
+      "label": "原有任务\n需要持续投入",
+      "x": 0,
+      "y": 1.1
+    },
+    {
+      "id": "new",
+      "label": "新成员\n熟悉环境",
+      "x": -4,
+      "y": -1.15
+    },
+    {
+      "id": "teach",
+      "label": "交接与带教\n需要老成员投入",
+      "x": 0,
+      "y": -1.15
+    },
+    {
+      "id": "ready",
+      "label": "熟练之后\n独立承担工作",
+      "x": 4,
+      "y": -1.15
+    },
+    {
+      "id": "parallel",
+      "label": "任务可拆分时\n并行产出增加",
+      "x": 4,
+      "y": 1.1
+    }
+  ],
+  "edges": [
+    {
+      "from": "old",
+      "to": "work"
+    },
+    {
+      "from": "new",
+      "to": "teach"
+    },
+    {
+      "from": "old",
+      "to": "teach"
+    },
+    {
+      "from": "teach",
+      "to": "ready"
+    },
+    {
+      "from": "ready",
+      "to": "parallel"
+    }
+  ],
+  "steps": [
+    {
+      "show": [
+        "old",
+        "work"
+      ],
+      "highlight": [
+        "old",
+        "work"
+      ],
+      "caption": "开始：老成员把时间用于原有任务。",
+      "duration": 4
+    },
+    {
+      "show": [
+        "new"
+      ],
+      "highlight": [
+        "new"
+      ],
+      "caption": "新人加入后需要熟悉环境，此时还不能独立承担原任务。",
+      "duration": 4
+    },
+    {
+      "show": [
+        "teach"
+      ],
+      "highlight": [
+        "old",
+        "teach"
+      ],
+      "caption": "若负责关键工作的老成员抽时间带教，原任务可用时间就会减少，短期推进可能变慢。",
+      "duration": 6
+    },
+    {
+      "show": [
+        "ready",
+        "parallel"
+      ],
+      "highlight": [
+        "ready",
+        "parallel"
+      ],
+      "caption": "新人熟练且任务可拆分时，才可能通过分工提高产出。",
+      "duration": 6
+    }
+  ]
+}

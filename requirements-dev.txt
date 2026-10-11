@@ -1,0 +1,4 @@
+# Dev environment: the package + runtime deps + linting/formatting tools, all
+# sourced from pyproject.toml ([project.optional-dependencies].dev) so there is a
+# single source of truth. Equivalent to: pip install -e .[dev]
+-e .[dev]

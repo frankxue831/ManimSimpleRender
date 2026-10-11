@@ -1,0 +1,92 @@
+# Explainer Engine storyboard: how many evidence tokens a planned cite carries.
+# It cites this repository's own planner (explainer/plan/evidence.py), so
+# `explainer verify examples/evidence-budget.story.yaml` works from any checkout.
+# Every code_callout / claim lists the evidence tokens that MUST be present in the
+# cited lines (verified by the citation gate before render).
+#
+# No meta.source.commit: the example lives in the repo it cites, so any pinned
+# commit would stop matching HEAD on the next commit. Without a pin the gate reads
+# the cited lines from disk and the on-screen badge says "verified" (no commit).
+version: 1
+meta:
+  title: "How much proof does a citation need?"
+  subtitle: "Explainer Engine - the planner's evidence budget"
+  source:
+    repo_url: "https://github.com/frankxue831/ManimSimpleRender"
+    repo_root: ".."
+  target_runtime_s: 50
+  voice: gtts
+theme:
+  syntax_style: monokai
+  resolution: "1080p30"
+  accent_confirmed: "#3FB950"
+  accent_contradicted: "#F85149"
+beats:
+  - id: per-line
+    canvas:
+      kind: plot
+      spec:
+        x: { label: "lines cited", min: 0, max: 16 }
+        y: { label: "evidence tokens", min: 0, max: 48 }
+        curves:
+          - { id: linear, fn: "2 * x", label: "2 tokens per line" }
+    code_callout:
+      display: "TOKENS_PER_LINE = 2"
+      language: python
+      cite: "explainer/plan/evidence.py:56"
+      evidence: ["TOKENS_PER_LINE", "2"]
+    narration: >
+      Every cite the planner writes carries evidence tokens the gate must find in
+      the cited lines. Its budget grows with the cite: room for two tokens per line.
+  - id: floor-and-cap
+    canvas:
+      kind: plot
+      spec:
+        x: { label: "lines cited", min: 0, max: 16 }
+        y: { label: "evidence tokens", min: 0, max: 48 }
+        curves:
+          - { id: linear, fn: "2 * x", style: faint }
+          - { id: budget, fn: "min(24, max(5, 2 * x))", accent: confirmed, label: "Budget: floor 5, cap 24" }
+        annotations:
+          - { kind: hline, y: 24, accent: contradicted, label: "CAP" }
+    code_callout:
+      display: |
+        wanted = max(BASE_TOKENS, TOKENS_PER_LINE * lines)
+        budget = min(MAX_TOKENS, wanted)
+      language: python
+      cite: "explainer/plan/evidence.py:205-211"
+      evidence:
+        - "def _token_budget(line_count)"
+        - "min(MAX_TOKENS, max(BASE_TOKENS, TOKENS_PER_LINE * line_count))"
+      regions:
+        - { lines: [1], emphasis: strong, narration: "A one-line cite still gets room for five tokens: a FLOOR on the budget, so short cites keep their coverage." }
+        - { lines: [2], emphasis: normal, narration: "And a long cite stops at a CAP of twenty-four, so it stays readable." }
+    caption: "floor 5 for short cites -- cap 24 from 12 lines up"
+    claims:
+      - { cite: "explainer/plan/evidence.py:55-57", evidence: ["BASE_TOKENS = 5", "MAX_TOKENS = 24"] }
+    narration: >
+      Proportional must not mean unbounded. Two bounds shape the budget: a floor
+      for short cites and a cap for long ones.
+  - id: no-proof-no-badge
+    canvas:
+      kind: plot
+      spec:
+        x: { label: "lines cited", min: 0, max: 16 }
+        y: { label: "evidence tokens", min: 0, max: 48 }
+        curves:
+          - { id: budget, fn: "min(24, max(5, 2 * x))", accent: confirmed, label: "Budget: floor 5, cap 24" }
+        annotations:
+          - { kind: hline, y: 2, accent: contradicted, label: "MIN to ship" }
+    code_callout:
+      display: "if found < MIN_TOKENS or strong == 0: raise WeakCiteError"
+      language: python
+      cite: "explainer/plan/evidence.py:312-313"
+      evidence: ["len(chosen) < MIN_TOKENS", "strong_count < 1", "WeakCiteError"]
+      regions:
+        - { lines: [1], emphasis: normal, narration: "Fewer than two tokens, or none of them strong, and the planner drops the whole beat instead of shipping it." }
+    claims:
+      - { cite: "explainer/plan/evidence.py:58", evidence: ["MIN_TOKENS = 2"] }
+    caption: "the planner drops a cite that cannot prove something"
+    narration: >
+      The budget is a ceiling, not a promise. A planned cite that cannot yield real proof
+      never reaches the video.

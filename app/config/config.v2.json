@@ -1,0 +1,14 @@
+{
+    "schema_version": 2,
+    "default_resolution_index": 0,
+    "resolutions": [
+        { "label": "Low Quality (-ql)", "flag": "-ql" },
+        { "label": "Medium Quality (-qm)", "flag": "-qm" },
+        { "label": "High Quality (-qh)", "flag": "-qh" },
+        { "label": "4K Quality (-qk)", "flag": "-qk" }
+    ],
+    "engines": [
+        { "label": "Default", "renderer_flag": "" },
+        { "label": "OpenGL (experimental)", "renderer_flag": "--renderer=opengl" }
+    ]
+}

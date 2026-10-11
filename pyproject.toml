@@ -1,0 +1,54 @@
+[tool.black]
+line-length = 100
+# Pin the lowest supported interpreter so formatting is deterministic and black's
+# AST safety-check passes when run under 3.12 (auto-detect would also target 3.13).
+target-version = ["py312"]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "manim-simple-render"
+version = "0.1.0"
+description = "A PyQt5 GUI for discovering and batch-rendering Manim scenes."
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+license = { file = "LICENSE" }
+dependencies = [
+    "PyQt5==5.15.11",
+    "manim==0.20.1",
+    # manim 0.20.x needs numpy 2.x, and numpy 2.1+ ships cp312/cp313 wheels, so a
+    # single modern pin now covers both supported interpreters (the old 1.x-on-3.12
+    # vs 2.x-on-3.13 split was only required while pinned to manim 0.18.1).
+    "numpy>=2.1,<3",
+]
+
+[project.optional-dependencies]
+dev = ["black==26.5.1", "flake8==7.3.0"]
+# The Explainer Engine (explainer/) builds on the render stack: a storyboard
+# YAML + cited code -> narrated animated video. PyYAML parses the IR;
+# manim-voiceover adds audio-led narration. 0.4.0 dropped pkg_resources (so the
+# old setuptools<81 pin is gone) and requires the symlink-safe
+# python-dotenv>=1.2.2 (PYSEC-2026-2270); it stores cache_dir as str, which
+# tts_compat handles for both versions.
+explainer = ["PyYAML>=6", "manim-voiceover[gtts]==0.4.0"]
+# The LLM planner (explainer/plan/) drafts a storyboard from real code. Kept
+# out of the `explainer` extra so `verify` and `render` stay dependency-free;
+# explainer/plan/client.py imports the SDK lazily so an uninstalled extra is a
+# clear error message rather than an ImportError at CLI start.
+planner = ["anthropic>=0.70"]
+
+[project.gui-scripts]
+manim-simple-render = "app.bootstrap:main"
+
+[project.scripts]
+explainer = "explainer.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["app*", "explainer*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+"app.config" = ["config.v2.json"]
+"app.ui" = ["theme.qss"]

@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "title": "缓存为什么能让重复请求更快？",
+  "font": "PingFang SC",
+  "nodes": [
+    {
+      "id": "request",
+      "label": "请求同一份数据",
+      "x": -4,
+      "y": 0
+    },
+    {
+      "id": "cache",
+      "label": "缓存\n检查已有结果",
+      "x": 0,
+      "y": 0
+    },
+    {
+      "id": "source",
+      "label": "原始计算或读取",
+      "x": 4,
+      "y": 1.2
+    },
+    {
+      "id": "reuse",
+      "label": "命中且仍有效\n直接复用结果",
+      "x": 4,
+      "y": -1.2
+    }
+  ],
+  "edges": [
+    {
+      "from": "request",
+      "to": "cache"
+    },
+    {
+      "from": "cache",
+      "to": "source"
+    },
+    {
+      "from": "cache",
+      "to": "reuse"
+    }
+  ],
+  "steps": [
+    {
+      "show": [
+        "request",
+        "cache"
+      ],
+      "highlight": [
+        "request",
+        "cache"
+      ],
+      "caption": "每次请求，先检查有没有可复用的结果。",
+      "duration": 4
+    },
+    {
+      "show": [
+        "source"
+      ],
+      "highlight": [
+        "source"
+      ],
+      "caption": "首次未命中，完成原始计算或读取后将结果存入缓存，后续请求才有结果可复用。",
+      "duration": 5
+    },
+    {
+      "show": [
+        "reuse"
+      ],
+      "highlight": [
+        "cache",
+        "reuse"
+      ],
+      "caption": "再次命中且结果仍有效时，可以跳过重复工作。",
+      "duration": 5
+    },
+    {
+      "show": [],
+      "highlight": [
+        "source",
+        "reuse"
+      ],
+      "caption": "缓存会占用空间，也要处理过期；它并不保证每次都更快。",
+      "duration": 6
+    }
+  ]
+}

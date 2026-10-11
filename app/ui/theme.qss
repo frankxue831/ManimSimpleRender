@@ -1,0 +1,52 @@
+/* app/ui/theme.qss - dark theme for ManimSimpleRender (PyQt5).
+   Externalized from the legacy inline get_stylesheet (ui.py:44-104).
+   Cancel state is property-driven: QPushButton[state="cancel"] (set via
+   theme.set_button_state), replacing the legacy objectName churn + whole-
+   stylesheet re-apply. */
+
+QWidget {
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+    background-color: #282c34;
+    color: #f0f0f0;
+}
+QLabel { color: #f0f0f0; padding: 5px; }
+QLabel[level="error"] { color: #ff6b6b; }
+QLineEdit {
+    padding: 5px;
+    border: 1px solid #555;
+    border-radius: 5px;
+    background-color: #3e4451;
+    color: #f0f0f0;
+}
+QPushButton {
+    padding: 10px;
+    background-color: #007BFF;
+    color: white;
+    border: none;
+    border-radius: 5px;
+}
+QPushButton:hover { background-color: #0069d9; }
+QPushButton:disabled { background-color: #555; color: #aaa; }
+QPushButton[state="cancel"] { background-color: #dc3545; }
+QPushButton[state="cancel"]:hover { background-color: #c82333; }
+QComboBox {
+    padding: 5px;
+    border: 1px solid #555;
+    border-radius: 5px;
+    background-color: #3e4451;
+    color: #f0f0f0;
+}
+QTextEdit {
+    padding: 5px;
+    border: 1px solid #555;
+    border-radius: 5px;
+    background-color: #2c313a;
+    color: #f0f0f0;
+    font-family: Monaco, Consolas, monospace;
+}
+QListWidget {
+    border: 1px solid #555;
+    border-radius: 5px;
+    background-color: #3e4451;
+}

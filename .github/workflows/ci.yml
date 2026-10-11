@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Qt offscreen system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libdbus-1-3
+
+      # The test suite imports PyQt5 + PyYAML but NOT manim: the app services are
+      # Qt-free, and the explainer tests are manim-free except the code_compat
+      # accessor check, which skips when manim is absent. So manim + its heavy
+      # system deps stay out of this fast job.
+      - name: Install Python dependencies (Qt + YAML + lint tools)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install PyQt5==5.15.11 "PyYAML>=6" black==26.5.1 flake8==7.3.0
+
+      - name: black --check
+        run: black --check app explainer tests main.py
+
+      - name: flake8
+        run: flake8 app explainer tests main.py
+
+      - name: Unit tests (headless)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest discover -s tests
+
+  # Tier A pure-pipeline e2e (automation harness Phase 1): drives discovery ->
+  # jobs -> command -> the real RenderRunner against a fake `manim` shim. Qt-free
+  # AND manim-free by design, so it installs NOTHING and proves the pipeline on a
+  # bare interpreter.
+  e2e-pure:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Tier A e2e (no PyQt5, no manim -- Qt/manim cases skip)
+        run: python -m unittest discover -s tests/e2e -t .
+
+  test-windows-render-supervision:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Windows render process supervision (no application dependencies)
+        run: python -m unittest tests.test_runner
+
+  package:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Verify the package builds + installs and ships its data files + entry
+      # point, WITHOUT pulling the heavy runtime deps (PyQt5/manim): the verified
+      # imports (config loader + theme) are Qt-free. Protects the packaging work.
+      - name: Install package (no deps)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-deps .
+
+      - name: Verify packaging (data files + entry point)
+        run: |
+          cd "${RUNNER_TEMP}"   # import the INSTALLED package, not the source tree
+          python -c "
+          from app.config.loader import load_config
+          from app.ui.theme import load_stylesheet
+          assert load_config().engines, 'config.v2.json did not ship'
+          assert load_stylesheet().strip(), 'theme.qss did not ship'
+          from importlib.metadata import entry_points
+          names = {ep.name for ep in entry_points(group='gui_scripts')}
+          assert 'manim-simple-render' in names, names
+          print('packaging smoke OK:', sorted(names))
+          "

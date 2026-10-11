@@ -1,0 +1,4 @@
+[flake8]
+max-line-length = 100
+# E203/W503 conflict with black's formatting; ignore per black's guidance.
+extend-ignore = E203,W503
