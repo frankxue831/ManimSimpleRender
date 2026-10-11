@@ -284,6 +284,19 @@ def _emit_provenance(callout, source, theme):
     return badge_lines("provenance", cite_label, badge, theme.accent_confirmed)
 
 
+def _emit_voiced_play(level, plays):
+    """Emit ``plays`` inside a voiceover block: capped, then held for the rest of the speech.
+
+    The cap keeps a Create/FadeIn from stretching across the whole line (a dashed line
+    drawing dash by dash before its label); the hold keeps VO length driving the pacing.
+    """
+    cap = f"min({VOICEOVER_VISUAL_CAP_S}, tracker.duration)"
+    return [
+        f"{level}self.play({', '.join(plays)}, run_time={cap})",
+        f"{level}self.wait(max(0, tracker.duration - {cap}))",
+    ]
+
+
 def _emit_reveal_steps(steps):
     """Emit voiceover/silent blocks for an ordered list of RevealSteps."""
     inner = INDENT + "    "
@@ -294,18 +307,8 @@ def _emit_reveal_steps(steps):
                 out.append(f"{INDENT}self.wait({step.post_wait})")
             continue
         if step.narration:
-            plays = ", ".join(step.plays)
             out.append(f"{INDENT}with self.voiceover(text={_s(step.narration)}) as tracker:")
-            # Cap visual run_time; hold for the rest of the speech so VO length
-            # still drives pacing without stretched mid-animation frames.
-            out.append(
-                f"{inner}self.play({plays}, "
-                f"run_time=min({VOICEOVER_VISUAL_CAP_S}, tracker.duration))"
-            )
-            out.append(
-                f"{inner}self.wait(max(0, tracker.duration - "
-                f"min({VOICEOVER_VISUAL_CAP_S}, tracker.duration)))"
-            )
+            out.extend(_emit_voiced_play(inner, step.plays))
         else:
             out.append(f"{INDENT}self.play({', '.join(step.plays)}, run_time={step.run_time})")
         if step.post_wait:
@@ -395,7 +398,8 @@ def _emit_beat(beat, storyboard):
 
     created = set()
 
-    # Beat narration -> reveal the base (first) curve.
+    # Beat narration -> reveal the base (first) curve. Capped like every voiced play: the
+    # narration describes the curve, so its whole shape should be up while it is described.
     out.append(f"{INDENT}with self.voiceover(text={_s(beat.narration)}) as tracker:")
     inner = INDENT + "    "
     plays = []
@@ -403,7 +407,7 @@ def _emit_beat(beat, storyboard):
         plays.append(f"Create({curves[0]})")
         created.add(0)
     if plays:
-        out.append(f"{inner}self.play({', '.join(plays)}, run_time=tracker.duration)")
+        out.extend(_emit_voiced_play(inner, plays))
     else:
         out.append(f"{inner}self.wait(tracker.duration)")
 
@@ -441,9 +445,7 @@ def _emit_beat(beat, storyboard):
         voiced = bool(region.narration.strip())
         if voiced:
             out.append(f"{INDENT}with self.voiceover(text={_s(region.narration)}) as tracker:")
-            level, run_time = inner, "tracker.duration"
-        else:
-            level, run_time = INDENT, "1.0"
+        level = inner if voiced else INDENT
         out.append(
             f"{level}{box} = SurroundingRectangle("
             f"{target}, color={_s(color)}, buff=0.025, stroke_width=2)"
@@ -463,8 +465,10 @@ def _emit_beat(beat, storyboard):
         # An annotation tied to a region draws with that region's highlight (and so
         # with its narration, if it has one); an untied one draws with the first region.
         plays.extend(f"Create({a})" for a, r in anns if (r or 1) == j + 1)
-        out.append(f"{level}self.play({', '.join(plays)}, run_time={run_time})")
-        if not voiced:
+        if voiced:
+            out.extend(_emit_voiced_play(inner, plays))
+        else:
+            out.append(f"{INDENT}self.play({', '.join(plays)}, run_time=1.0)")
             out.append(f"{INDENT}self.wait(0.6)")  # hold the silent highlight briefly
         prev_box = box
 

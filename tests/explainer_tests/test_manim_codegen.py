@@ -52,6 +52,18 @@ def _play_after(src, marker):
     return next(line for line in lines[start + 1 :] if "self.play(" in line)
 
 
+def _line_after(src, line):
+    """The generated line right after ``line``."""
+    lines = src.splitlines()
+    return lines[lines.index(line) + 1]
+
+
+CAPPED_RUN_TIME = f"run_time=min({VOICEOVER_VISUAL_CAP_S}, tracker.duration))"
+HOLD_FOR_REST_OF_SPEECH = (
+    f"self.wait(max(0, tracker.duration - min({VOICEOVER_VISUAL_CAP_S}, tracker.duration)))"
+)
+
+
 class CodegenTests(unittest.TestCase):
     def setUp(self):
         self.sb = load_storyboard(EXAMPLE)
@@ -504,6 +516,85 @@ class CodegenTests(unittest.TestCase):
         sb = self._plot_beat(spec={"annotations": [{"kind": "hline", "y": 1, "region": 1}]})
         with self.assertRaises(CodegenError):
             generate_scene(sb)
+
+    # --- voiced plot plays: capped, then hold for the rest of the speech ---
+
+    def test_voiced_region_play_is_capped_then_holds_for_its_narration(self):
+        # A tied annotation's dashed line draws dash by dash before its label. Stretched
+        # over the whole region narration, the label landed only as the voice finished.
+        sb = self._plot_beat(
+            self._two_region_callout(),
+            spec={
+                "curves": [{"fn": "x"}, {"fn": "2 * x"}, {"fn": "3 * x"}],
+                "annotations": [
+                    {"kind": "hline", "y": 24, "label": "CAP", "region": 2},
+                    {"kind": "hline", "y": 5, "label": "FLOOR", "region": 1},
+                ],
+            },
+        )
+        src = generate_scene(sb)
+        compile(src, "<generated>", "exec")
+        for narration, visuals in (
+            ("Talk about the floor.", ("Create(box0)", "Create(curve1)", "Create(ann1)")),
+            ("Talk about the cap.", ("FadeIn(box1)", "Create(curve2)", "Create(ann0)")),
+        ):
+            with self.subTest(narration=narration):
+                play = _play_after(src, narration)
+                for visual in visuals:
+                    self.assertIn(visual, play)
+                self.assertTrue(play.endswith(CAPPED_RUN_TIME), play)
+                self.assertEqual(_line_after(src, play).strip(), HOLD_FOR_REST_OF_SPEECH)
+        self.assertNotIn("run_time=tracker.duration)", src)
+
+    def test_voiced_region_on_a_code_canvas_is_capped_too(self):
+        # Code-only beats share the region loop, so their highlight box draws the same way.
+        sb = Storyboard(
+            version=1,
+            title="t",
+            source=Source(repo_root="/tmp"),
+            theme=Theme(),
+            beats=(
+                Beat(
+                    id="b",
+                    canvas=Canvas(kind="code", spec={}),
+                    narration="n",
+                    code_callout=self._two_region_callout(),
+                ),
+            ),
+        )
+        src = generate_scene(sb)
+        play = _play_after(src, "Talk about the floor.")
+        self.assertIn("Create(box0)", play)
+        self.assertTrue(play.endswith(CAPPED_RUN_TIME), play)
+
+    def test_silent_region_play_keeps_its_fixed_run_time(self):
+        # No narration to hold for: the highlight plays for a fixed second, then pauses.
+        sb = self._plot_beat(
+            CodeCallout(
+                display="floor line\ncap line",
+                language="text",
+                cite="a.py:1",
+                regions=(Region(lines=(1,), narration=""),),
+            ),
+            spec={"annotations": [{"kind": "hline", "y": 5, "label": "FLOOR"}]},
+        )
+        src = generate_scene(sb)
+        play = _line_with(src, "Create(box0)")
+        self.assertEqual(play, "        self.play(Create(box0), Create(ann0), run_time=1.0)")
+        self.assertEqual(_line_after(src, play), "        self.wait(0.6)")
+
+    def test_beat_narration_draws_the_first_curve_capped_then_holds(self):
+        # The opening narration describes the curve: show its whole shape while it is
+        # described, not a line still crawling across the axes as the voice ends.
+        sb = self._plot_beat(spec={"curves": [{"fn": "min(24, max(5, 2 * x))"}]})
+        src = generate_scene(sb)
+        play = _play_after(src, "with self.voiceover(text='n')")
+        self.assertEqual(play.strip(), f"self.play(Create(curve0), {CAPPED_RUN_TIME}")
+        self.assertEqual(_line_after(src, play).strip(), HOLD_FOR_REST_OF_SPEECH)
+
+    def test_example_plot_beats_never_stretch_a_play_over_a_voiceover(self):
+        self.assertNotIn("run_time=tracker.duration", self.src)
+        self.assertTrue(_play_after(self.src, "stops at a CAP").endswith(CAPPED_RUN_TIME))
 
     def test_beat_with_no_visual_content_raises(self):
         # decision 3 / ARCH-03: a beat that yields no visual mobjects (non-plot canvas,
