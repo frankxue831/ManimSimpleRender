@@ -11,6 +11,7 @@ import unittest
 
 from explainer.codegen.manim_codegen import (
     VOICEOVER_VISUAL_CAP_S,
+    X_NUMBER_ROW,
     CodegenError,
     generate_scene,
 )
@@ -34,6 +35,21 @@ EXAMPLE = os.path.join(
     "examples",
     "evidence-budget.story.yaml",
 )
+
+
+def _line_with(src, needle):
+    """The one generated line containing ``needle``."""
+    matches = [line for line in src.splitlines() if needle in line]
+    if len(matches) != 1:
+        raise AssertionError(f"{needle!r} on {len(matches)} lines")
+    return matches[0]
+
+
+def _play_after(src, marker):
+    """The first ``self.play(`` line after the first line containing ``marker``."""
+    lines = src.splitlines()
+    start = next(i for i, line in enumerate(lines) if marker in line)
+    return next(line for line in lines[start + 1 :] if "self.play(" in line)
 
 
 class CodegenTests(unittest.TestCase):
@@ -114,6 +130,27 @@ class CodegenTests(unittest.TestCase):
         # Both bounds the narration names must be marked on screen, not left to color.
         self.assertIn("24 CAP", self.src)
         self.assertIn("5 FLOOR", self.src)
+
+    def test_example_axes_are_numbered(self):
+        # The caption's "cap 24 from 12 lines up" must be readable off the axes.
+        self.assertEqual(self.src.count("axes.x_axis.add_labels("), 3)
+        self.assertEqual(self.src.count("axes.y_axis.add_labels("), 3)
+        self.assertIn("(12.0, '12')", self.src)
+        self.assertIn("(24.0, '24')", self.src)
+
+    def test_example_budget_bends_are_sharp(self):
+        self.assertIn(
+            "min(24, max(5, 2 * x)), x_range=[0, 16, 0.04], use_smoothing=False", self.src
+        )
+
+    def test_example_marks_each_bound_while_it_is_narrated(self):
+        # floor-and-cap: CAP is ann0, FLOOR is ann1. Each line draws with its own region's
+        # narration, so the CAP no longer appears while the voice is on the FLOOR.
+        floor_play = _play_after(self.src, "a FLOOR on the budget")
+        cap_play = _play_after(self.src, "stops at a CAP")
+        self.assertIn("Create(ann1)", floor_play)
+        self.assertNotIn("Create(ann0)", floor_play)
+        self.assertIn("Create(ann0)", cap_play)
 
     def test_emits_citation_provenance(self):
         # PD-01: the differentiator must be visible IN the video -- each code callout
@@ -252,6 +289,221 @@ class CodegenTests(unittest.TestCase):
         src = generate_scene(sb)
         compile(src, "<generated>", "exec")
         self.assertIn("axes.c2p(0, 0.4)", src)
+
+    # --- tick numbers (opt-in per axis) ---
+
+    def test_axes_carry_no_tick_numbers_by_default(self):
+        sb = self._plot_beat(spec={"x": {"min": 0, "max": 16}, "y": {"min": 0, "max": 48}})
+        src = generate_scene(sb)
+        self.assertIn("'include_numbers': False", src)
+        self.assertNotIn("add_labels(", src)
+
+    def test_x_numbers_label_every_tick(self):
+        sb = self._plot_beat(spec={"x": {"min": 0, "max": 16, "numbers": True}})
+        src = generate_scene(sb)
+        compile(src, "<generated>", "exec")
+        line = _line_with(src, "axes.x_axis.add_labels(")
+        for tick in ("(0.0, '0')", "(4.0, '4')", "(8.0, '8')", "(12.0, '12')", "(16.0, '16')"):
+            self.assertIn(tick, line)
+        self.assertNotIn("axes.y_axis.add_labels(", src)
+
+    def test_y_numbers_label_every_tick(self):
+        sb = self._plot_beat(spec={"y": {"min": 0, "max": 48, "numbers": True}})
+        src = generate_scene(sb)
+        line = _line_with(src, "axes.y_axis.add_labels(")
+        self.assertIn("(24.0, '24')", line)
+        self.assertIn("(48.0, '48')", line)
+        self.assertNotIn("axes.x_axis.add_labels(", src)
+
+    def test_fractional_ticks_keep_their_decimals(self):
+        sb = self._plot_beat(spec={"x": {"min": 0, "max": 10, "numbers": True}})
+        line = _line_with(generate_scene(sb), "axes.x_axis.add_labels(")
+        self.assertIn("(2.5, '2.5')", line)
+        self.assertIn("(10.0, '10')", line)
+
+    def test_a_tick_rounding_to_zero_reads_zero_not_minus_zero(self):
+        # -0.9 + 3 * 0.3 is -5.6e-17: it must label as 0, not -0.
+        sb = self._plot_beat(spec={"x": {"min": -0.9, "max": 0.3, "numbers": True}})
+        line = _line_with(generate_scene(sb), "axes.x_axis.add_labels(")
+        self.assertIn("(0.0, '0')", line)
+        self.assertNotIn("'-0'", line)
+
+    def test_tick_numbers_are_written_out_in_full(self):
+        # No scientific notation and no 6-significant-digit rounding.
+        big = self._plot_beat(spec={"y": {"min": 0, "max": 2000000, "numbers": True}})
+        line = _line_with(generate_scene(big), "axes.y_axis.add_labels(")
+        self.assertIn("(1500000.0, '1500000')", line)
+        self.assertNotIn("e+", line)
+        fine = self._plot_beat(spec={"x": {"min": 0, "max": 100001, "numbers": True}})
+        line = _line_with(generate_scene(fine), "axes.x_axis.add_labels(")
+        self.assertIn("(25000.25, '25000.25')", line)
+
+    def test_zero_label_is_skipped_where_the_other_axis_crosses_it(self):
+        # With both ranges spanning 0 the axes cross mid-plot, and each axis line would
+        # run through the other's "0" (Manim skips 0 by default for the same reason).
+        sb = self._plot_beat(
+            spec={
+                "x": {"min": -4, "max": 4, "numbers": True},
+                "y": {"min": -2, "max": 6, "numbers": True},
+            }
+        )
+        src = generate_scene(sb)
+        x_line = _line_with(src, "axes.x_axis.add_labels(")
+        y_line = _line_with(src, "axes.y_axis.add_labels(")
+        self.assertIn("(-4.0, '-4')", x_line)
+        self.assertNotIn("(0.0, '0')", x_line)
+        self.assertIn("(-2.0, '-2')", y_line)
+        self.assertNotIn("(0.0, '0')", y_line)
+
+    def test_zero_labels_are_kept_at_a_corner_origin(self):
+        sb = self._plot_beat(
+            spec={"x": {"min": 0, "max": 16, "numbers": True}, "y": {"numbers": True}}
+        )
+        src = generate_scene(sb)
+        self.assertIn("(0.0, '0')", _line_with(src, "axes.x_axis.add_labels("))
+        self.assertIn("(0.0, '0')", _line_with(src, "axes.y_axis.add_labels("))
+
+    def test_tick_numbers_are_sans_text_not_latex(self):
+        # Numbers match the other plot labels (sans Text) and need no LaTeX install.
+        sb = self._plot_beat(spec={"x": {"numbers": True}})
+        line = _line_with(generate_scene(sb), "axes.x_axis.add_labels(")
+        self.assertIn("Text(", line)
+        self.assertIn("font='Arial'", line)
+        self.assertIn("disable_ligatures=True", line)
+        self.assertNotIn("Tex(", line)
+
+    def test_tick_numbers_are_added_before_axis_labels_are_placed(self):
+        # The axis titles are placed next_to the axis; adding the numbers first makes
+        # them part of the axis, so the titles clear the numbers instead of covering them.
+        sb = self._plot_beat(spec={"x": {"numbers": True}, "y": {"numbers": True}})
+        src = generate_scene(sb)
+        self.assertLess(src.index("axes.x_axis.add_labels("), src.index("x_label = Text("))
+        self.assertLess(src.index("axes.y_axis.add_labels("), src.index("y_label = Text("))
+
+    def test_x_number_row_comes_out_of_the_plot_height(self):
+        # The x numbers add a row under the axis; shortening the axes by that row keeps a
+        # numbered beat inside today's frame margins (the caption must not hit the edge).
+        default = generate_scene(self._plot_beat(spec={}))
+        numbered = generate_scene(self._plot_beat(spec={"x": {"numbers": True}}))
+        y_only = generate_scene(self._plot_beat(spec={"y": {"numbers": True}}))
+        self.assertIn("y_length=3.25,", default)
+        self.assertIn(f"y_length={3.25 - X_NUMBER_ROW!r},", numbered)
+        self.assertIn("y_length=3.25,", y_only)  # y numbers add width, not height
+
+    def test_non_bool_numbers_raises(self):
+        # "false" is a truthy string: guessing would silently number the axis.
+        sb = self._plot_beat(spec={"x": {"numbers": "false"}})
+        with self.assertRaises(CodegenError):
+            generate_scene(sb)
+
+    # --- sharp bends for piecewise curves ---
+
+    def test_piecewise_curve_is_sampled_densely_without_smoothing(self):
+        # Smoothing rounds the bends of min/max; dense straight segments keep them sharp.
+        sb = self._plot_beat(
+            spec={"x": {"min": 0, "max": 16}, "curves": [{"fn": "min(24, max(5, 2 * x))"}]}
+        )
+        line = _line_with(generate_scene(sb), "curve0 = axes.plot(")
+        self.assertIn("x_range=[0, 16, 0.04]", line)
+        self.assertIn("use_smoothing=False", line)
+
+    def test_every_piecewise_construct_gets_sharp_sampling(self):
+        for fn in ("max(0, x - 3)", "min(1, x)", "abs(x - 5)", "x % 4"):
+            with self.subTest(fn=fn):
+                sb = self._plot_beat(spec={"curves": [{"fn": fn}]})
+                line = _line_with(generate_scene(sb), "curve0 = axes.plot(")
+                self.assertIn("use_smoothing=False", line)
+
+    def test_smooth_curve_keeps_default_smoothed_sampling(self):
+        sb = self._plot_beat(
+            spec={"x": {"min": 0, "max": 120}, "curves": [{"fn": "0.5 ** (x / 30)"}]}
+        )
+        src = generate_scene(sb)
+        line = _line_with(src, "curve0 = axes.plot(")
+        self.assertIn("x_range=[0, 120],", line)
+        self.assertNotIn("use_smoothing", src)
+
+    # --- annotations tied to a region ---
+
+    def _two_region_callout(self):
+        return CodeCallout(
+            display="floor line\ncap line",
+            language="text",
+            cite="a.py:1",
+            regions=(
+                Region(lines=(1,), narration="Talk about the floor."),
+                Region(lines=(2,), narration="Talk about the cap."),
+            ),
+        )
+
+    def test_annotation_tied_to_a_region_draws_with_that_region(self):
+        sb = self._plot_beat(
+            self._two_region_callout(),
+            spec={
+                "annotations": [
+                    {"kind": "hline", "y": 24, "label": "CAP", "region": 2},
+                    {"kind": "hline", "y": 5, "label": "FLOOR", "region": 1},
+                ]
+            },
+        )
+        src = generate_scene(sb)
+        compile(src, "<generated>", "exec")
+        floor_play = _play_after(src, "Talk about the floor.")
+        cap_play = _play_after(src, "Talk about the cap.")
+        self.assertIn("Create(ann1)", floor_play)
+        self.assertNotIn("Create(ann0)", floor_play)
+        self.assertIn("Create(ann0)", cap_play)
+        self.assertNotIn("Create(ann1)", cap_play)
+        self.assertEqual(src.count("Create(ann0)"), 1)
+
+    def test_untied_annotations_still_draw_with_the_first_region(self):
+        sb = self._plot_beat(
+            self._two_region_callout(),
+            spec={
+                "annotations": [
+                    {"kind": "hline", "y": 24, "label": "CAP"},
+                    {"kind": "hline", "y": 5, "label": "FLOOR", "region": 2},
+                ]
+            },
+        )
+        src = generate_scene(sb)
+        self.assertIn("Create(ann0)", _play_after(src, "Talk about the floor."))
+        self.assertIn("Create(ann1)", _play_after(src, "Talk about the cap."))
+
+    def test_annotation_tied_to_a_silent_region_draws_with_its_highlight(self):
+        # A highlight-only region is a valid target: the line lands with its silent play.
+        sb = self._plot_beat(
+            CodeCallout(
+                display="floor line\ncap line",
+                language="text",
+                cite="a.py:1",
+                regions=(
+                    Region(lines=(1,), narration="Talk about the floor."),
+                    Region(lines=(2,), narration=""),
+                ),
+            ),
+            spec={"annotations": [{"kind": "hline", "y": 24, "label": "CAP", "region": 2}]},
+        )
+        src = generate_scene(sb)
+        compile(src, "<generated>", "exec")
+        self.assertNotIn("Create(ann0)", _play_after(src, "Talk about the floor."))
+        self.assertIn("Create(ann0)", _line_with(src, "FadeIn(box1)"))
+
+    def test_annotation_region_out_of_range_raises(self):
+        for region in (0, 3, True, "2"):
+            with self.subTest(region=region):
+                sb = self._plot_beat(
+                    self._two_region_callout(),
+                    spec={"annotations": [{"kind": "hline", "y": 1, "region": region}]},
+                )
+                with self.assertRaises(CodegenError):
+                    generate_scene(sb)
+
+    def test_annotation_region_without_regions_raises(self):
+        # No regions means no region narration to wait for: fail, never drop it silently.
+        sb = self._plot_beat(spec={"annotations": [{"kind": "hline", "y": 1, "region": 1}]})
+        with self.assertRaises(CodegenError):
+            generate_scene(sb)
 
     def test_beat_with_no_visual_content_raises(self):
         # decision 3 / ARCH-03: a beat that yields no visual mobjects (non-plot canvas,

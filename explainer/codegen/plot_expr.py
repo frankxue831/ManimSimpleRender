@@ -78,6 +78,23 @@ def normalize_curve(expr):
     return ast.unparse(_parse_validated(expr))
 
 
+_PIECEWISE_FUNCS = frozenset({"min", "max", "abs"})
+
+
+def is_piecewise(expr):
+    """True if ``expr`` can bend or jump: it calls min/max/abs or uses ``%``.
+
+    Codegen plots these with dense straight segments, because Manim's curve
+    smoothing rounds every corner it is given.
+    """
+    for node in ast.walk(_parse_validated(expr)):
+        if isinstance(node, ast.Call) and node.func.id in _PIECEWISE_FUNCS:
+            return True
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+            return True
+    return False
+
+
 def compile_curve(expr):
     """Parse and validate ``expr``; return a callable ``f(x) -> float``.
 

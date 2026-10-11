@@ -11,6 +11,7 @@ import unittest
 from explainer.codegen.plot_expr import (
     PlotExprError,
     compile_curve,
+    is_piecewise,
     normalize_curve,
     sample_curve,
 )
@@ -93,6 +94,25 @@ class SampleCurveTests(unittest.TestCase):
         pts = sample_curve("log(x)", [0.0, 1.0])  # log(0) -> domain error, dropped
         self.assertEqual(pts, [(1.0, 0.0)])
         self.assertTrue(all(math.isfinite(y) for _, y in pts))
+
+
+class IsPiecewiseTests(unittest.TestCase):
+    def test_min_max_abs_mod_are_piecewise(self):
+        for expr in ("min(24, max(5, 2 * x))", "max(0, x)", "abs(x - 5)", "x % 4"):
+            with self.subTest(expr=expr):
+                self.assertTrue(is_piecewise(expr))
+
+    def test_a_nested_bend_is_found(self):
+        self.assertTrue(is_piecewise("0.5 ** (min(x, 60) / 30)"))
+
+    def test_smooth_expressions_are_not_piecewise(self):
+        for expr in ("0.5 ** (x / 30)", "2 * x", "exp(-x) + log(x + 1)", "0.06"):
+            with self.subTest(expr=expr):
+                self.assertFalse(is_piecewise(expr))
+
+    def test_invalid_expression_raises(self):
+        with self.assertRaises(PlotExprError):
+            is_piecewise("eval('x')")
 
 
 if __name__ == "__main__":
