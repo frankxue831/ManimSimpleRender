@@ -113,6 +113,53 @@ Try the citation gate on the shipped example, which cites this repository's own 
 explainer verify examples/evidence-budget.story.yaml
 ```
 
+## Explainer and concept-render tools
+
+These are separate command-line tools in the same repo. They need the Manim system
+prerequisites above for any step that renders video.
+
+### Explainer (`explainer/`)
+
+Install with `pip install -e ".[explainer]"` (adds PyYAML and manim-voiceover). This installs
+the `explainer` command (equivalent: `python -m explainer.cli`).
+
+```bash
+# Check a storyboard's citations against the source repo it cites
+explainer verify examples/evidence-budget.story.yaml
+
+# Generate, verify, and render a storyboard to an mp4
+explainer render examples/evidence-budget.story.yaml -o out.mp4 [--quality ql|qm|qh|qp|qk|1080p]
+
+# Draft a storyboard from real code with an LLM
+explainer plan --repo . --focus PATH[:START-END] --topic "what to explain" -o draft.story.yaml \
+  [--provider grok|anthropic] [--beats 4] [--revisions 1] [--dry-run]
+```
+
+`--focus` is repeatable. `--dry-run` prints the prompt and exits without calling a model.
+Run `explainer plan --help` for the remaining options (`--model`, `--effort`, `--max-tokens`,
+`--max-repairs`, `--allow-dirty`).
+
+Planner providers and environment variables:
+
+- `--provider grok` (the default) runs the `grok` CLI as a subprocess. It must be on `PATH`,
+  or set `EXPLAINER_GROK_BIN` to the binary's path.
+- `--provider anthropic` needs `pip install -e ".[planner]"` and an Anthropic API key, read by
+  the SDK from `ANTHROPIC_API_KEY` (or an `ant` profile).
+- `EXPLAINER_TTS_CACHE` (optional) sets the narration cache directory used by `render`.
+
+### Concept render (`concept_render/`)
+
+Renders a silent concept draft from a JSON input (max 64 KiB) and prints a JSON receipt.
+Run it from a source checkout; it needs no API key. See `docs/concept-render.md` for the
+input format.
+
+```bash
+python -m concept_render --input examples/concepts/team_growth.json --output-dir output/concepts --timeout 60
+python -m concept_render.revision --original original.json --candidate candidate.json
+```
+
+`--timeout` is in seconds, defaults to 60, and must be greater than 0 and at most 120.
+
 ## License
 
 [Apache License 2.0](LICENSE).
