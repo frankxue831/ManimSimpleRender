@@ -7,6 +7,10 @@
 # No meta.source.commit: the example lives in the repo it cites, so any pinned
 # commit would stop matching HEAD on the next commit. Without a pin the gate reads
 # the cited lines from disk and the on-screen badge says "verified" (no commit).
+#
+# Plot opt-ins: `numbers: true` on an axis labels its ticks; `region: N` on an
+# annotation draws it with code region N's highlight and narration (untied ones draw
+# with the first region). Piecewise curves (min/max/abs/%) are plotted with sharp bends.
 version: 1
 meta:
   title: "How much proof does a citation need?"
@@ -27,8 +31,8 @@ beats:
     canvas:
       kind: plot
       spec:
-        x: { label: "lines cited", min: 0, max: 16 }
-        y: { label: "evidence tokens", min: 0, max: 48 }
+        x: { label: "lines cited", min: 0, max: 16, numbers: true }
+        y: { label: "evidence tokens", min: 0, max: 48, numbers: true }
         curves:
           - { id: linear, fn: "2 * x", label: "2 tokens per line" }
     code_callout:
@@ -43,14 +47,14 @@ beats:
     canvas:
       kind: plot
       spec:
-        x: { label: "lines cited", min: 0, max: 16 }
-        y: { label: "evidence tokens", min: 0, max: 48 }
+        x: { label: "lines cited", min: 0, max: 16, numbers: true }
+        y: { label: "evidence tokens", min: 0, max: 48, numbers: true }
         curves:
           - { id: linear, fn: "2 * x", style: faint }
           - { id: budget, fn: "min(24, max(5, 2 * x))", accent: confirmed, label: "Budget: floor 5, cap 24" }
         annotations:
-          - { kind: hline, y: 24, accent: contradicted, label: "CAP" }
-          - { kind: hline, y: 5, accent: confirmed, label: "FLOOR" }
+          - { kind: hline, y: 24, accent: contradicted, label: "CAP", region: 2 }
+          - { kind: hline, y: 5, accent: confirmed, label: "FLOOR", region: 1 }
     code_callout:
       display: |
         wanted = max(BASE_TOKENS, TOKENS_PER_LINE * lines)
@@ -73,8 +77,8 @@ beats:
     canvas:
       kind: plot
       spec:
-        x: { label: "lines cited", min: 0, max: 16 }
-        y: { label: "evidence tokens", min: 0, max: 48 }
+        x: { label: "lines cited", min: 0, max: 16, numbers: true }
+        y: { label: "evidence tokens", min: 0, max: 48, numbers: true }
         curves:
           - { id: budget, fn: "min(24, max(5, 2 * x))", accent: confirmed, label: "Budget: floor 5, cap 24" }
         annotations:

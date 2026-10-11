@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from explainer.storyboard.model import display_line_count
 
-from .plot_expr import PlotExprError, normalize_curve
+from .plot_expr import PlotExprError, is_piecewise, normalize_curve
 from explainer.codegen.common import (
     INDENT,
     LABEL_FONT,
@@ -30,6 +30,14 @@ from explainer.codegen.common import (
 # speech length is preserved without stretching Create/FadeIn across full VO
 # (which made Write/Create mid-frames linger for seconds on the public showcase).
 VOICEOVER_VISUAL_CAP_S = 0.75
+
+# Straight segments across the x range for a piecewise curve: short enough to read
+# as a smooth line, and a bend between two samples is cut by at most 1/400 of the axis.
+PIECEWISE_SAMPLES = 400
+
+# Height of the x tick-number row (label buff + 16pt digits). A numbered x axis is
+# shortened by it, so the composed beat keeps the frame margins of an unnumbered one.
+X_NUMBER_ROW = 0.3
 
 
 @dataclass
@@ -129,11 +137,39 @@ def _curve_color(curve, theme):
     return "#9CDCFE"
 
 
+def _emit_tick_numbers(axis, spec, lo, step, other_min):
+    """Label the axis's five ticks (``lo + k * step``) when its spec says ``numbers: true``.
+
+    Sans ``Text`` like every other plot label (Manim's own numbers need LaTeX), added
+    through ``add_labels`` so they become part of the axis: the axis title, placed
+    ``next_to`` the axis afterwards, then clears them. The 0 label is dropped when the
+    other axis runs on past this one (``other_min < 0``): its line would strike it.
+    """
+    numbers = spec.get("numbers", False)
+    if not isinstance(numbers, bool):
+        raise CodegenError(f"plot {axis}.numbers must be true or false, got {numbers!r}")
+    if not numbers:
+        return []
+    values = (round(lo + k * step, 9) + 0.0 for k in range(5))  # + 0.0: no -0.0
+    ticks = ", ".join(
+        # Positional, never scientific: '1500000' and '25000.25', not '1.5e+06'.
+        f"({v!r}, {_s(f'{v:.9f}'.rstrip('0').rstrip('.'))})"
+        for v in values
+        if v != 0 or other_min >= 0
+    )
+    return [
+        f"{INDENT}axes.{axis}_axis.add_labels({{v: Text(s, font={_s(LABEL_FONT)}, font_size=16, "
+        f"color={_s(MUTED_COLOR)}, disable_ligatures=True) for v, s in ({ticks})}}, font_size=16)"
+    ]
+
+
 def _emit_plot(spec, theme):
     """Emit Axes + sans labels + curves + annotations, grouped as ``plot_group``.
 
-    Returns ``(lines, curves, anns)``. Curves/annotations are constructed but not
-    yet animated; :func:`_emit_beat` decides the reveal choreography.
+    Returns ``(lines, curves, anns, legend)``; each ann is a ``(var, region)`` pair,
+    ``region`` being the authored 1-based region number or ``None``. Curves and
+    annotations are constructed but not yet animated; :func:`_emit_beat` decides the
+    reveal choreography.
     """
     x = spec.get("x", {}) or {}
     y = spec.get("y", {}) or {}
@@ -141,10 +177,14 @@ def _emit_plot(spec, theme):
     ymin, ymax = y.get("min", 0), y.get("max", 1)
     xstep = (xmax - xmin) / 4.0 or 1
     ystep = (ymax - ymin) / 4.0 or 1
+    x_numbers = _emit_tick_numbers("x", x, xmin, xstep, ymin)
+    y_length = 3.25 - X_NUMBER_ROW if x_numbers else 3.25
     lines = [
         f"{INDENT}axes = Axes(x_range=[{xmin}, {xmax}, {xstep}], "
-        f"y_range=[{ymin}, {ymax}, {ystep}], x_length=10.0, y_length=3.25, "
+        f"y_range=[{ymin}, {ymax}, {ystep}], x_length=10.0, y_length={y_length!r}, "
         f"axis_config={{'color': {_s(MUTED_COLOR)}, 'include_numbers': False}}, tips=False)",
+        *x_numbers,
+        *_emit_tick_numbers("y", y, ymin, ystep, xmin),
         f"{INDENT}x_label = Text({_s(x.get('label', ''))}, font={_s(LABEL_FONT)}, font_size=19, "
         f"color={_s(TEXT_COLOR)}, disable_ligatures=True).next_to(axes.x_axis, DOWN, buff=0.22)",
         f"{INDENT}y_label = Text({_s(y.get('label', ''))}, font={_s(LABEL_FONT)}, font_size=19, "
@@ -162,8 +202,16 @@ def _emit_plot(spec, theme):
             raise CodegenError(f"unsafe/invalid curve fn {fn!r}: {exc}") from exc
         var = f"curve{i}"
         color = _curve_color(curve, theme)
+        if is_piecewise(safe_fn):
+            # Manim smooths a plot through its samples, which rounds every bend of a
+            # min/max/abs/% curve. Dense straight segments keep the bends sharp; smooth
+            # curves keep the default sampling, so their output is unchanged.
+            step = (xmax - xmin) / PIECEWISE_SAMPLES
+            sampling = f"x_range=[{xmin}, {xmax}, {step!r}], use_smoothing=False"
+        else:
+            sampling = f"x_range=[{xmin}, {xmax}]"
         lines.append(
-            f"{INDENT}{var} = axes.plot(lambda x: {safe_fn}, x_range=[{xmin}, {xmax}], "
+            f"{INDENT}{var} = axes.plot(lambda x: {safe_fn}, {sampling}, "
             f"color={_s(color)}, stroke_width=4)"
         )
         curves.append(var)
@@ -190,7 +238,7 @@ def _emit_plot(spec, theme):
             f".align_to({var}_line, RIGHT).shift(LEFT * 0.3)",
             f"{INDENT}{var} = VGroup({var}_line, {var}_label)",
         ]
-        anns.append(var)
+        anns.append((var, ann.get("region")))
     # Legend: one colored swatch + label per labeled curve, anchored top-right inside
     # the axes (decay curves sit low on the right, so that corner stays clear). This is
     # the only thing identifying which curve is which -- color alone is not enough.
@@ -215,7 +263,7 @@ def _emit_plot(spec, theme):
             f".shift(DOWN * 0.15 + LEFT * 0.2)",
         ]
 
-    members = ["axes", "axis_labels"] + curves + anns + ([legend] if legend else [])
+    members = ["axes", "axis_labels"] + curves + [a for a, _ in anns] + ([legend] if legend else [])
     lines.append(f"{INDENT}plot_group = VGroup({', '.join(members)})")
     return lines, curves, anns, legend
 
@@ -361,6 +409,16 @@ def _emit_beat(beat, storyboard):
 
     # Regions -> per-region voiceover + highlight; fold in the next curve/annotations.
     regions = beat.code_callout.regions if has_code else ()
+    for _, region in anns:
+        if region is not None and (
+            isinstance(region, bool)
+            or not isinstance(region, int)
+            or not 1 <= region <= len(regions)
+        ):
+            raise CodegenError(
+                f"beat {beat.id!r}: annotation region {region!r} does not name one of "
+                f"the beat's {len(regions)} code region(s) (1-based)"
+            )
     n_code_lines = display_line_count(beat.code_callout.display) if has_code else 0
     prev_box = None
     for j, region in enumerate(regions):
@@ -402,8 +460,9 @@ def _emit_beat(beat, storyboard):
         if nxt < len(curves) and nxt not in created:
             plays.append(f"Create({curves[nxt]})")
             created.add(nxt)
-        if j == 0:
-            plays.extend(f"Create({a})" for a in anns)
+        # An annotation tied to a region draws with that region's highlight (and so
+        # with its narration, if it has one); an untied one draws with the first region.
+        plays.extend(f"Create({a})" for a, r in anns if (r or 1) == j + 1)
         out.append(f"{level}self.play({', '.join(plays)}, run_time={run_time})")
         if not voiced:
             out.append(f"{INDENT}self.wait(0.6)")  # hold the silent highlight briefly
@@ -411,7 +470,7 @@ def _emit_beat(beat, storyboard):
 
     # Any curves not yet revealed (and annotations if there were no regions).
     leftover = [c for k, c in enumerate(curves) if k not in created]
-    leftover_anns = anns if not regions else []
+    leftover_anns = [a for a, _ in anns] if not regions else []
     tail = [f"Create({c})" for c in leftover] + [f"Create({a})" for a in leftover_anns]
     if tail:
         out.append(f"{INDENT}self.play({', '.join(tail)}, run_time=1.0)")
