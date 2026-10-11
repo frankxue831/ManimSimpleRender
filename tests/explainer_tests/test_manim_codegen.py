@@ -110,8 +110,10 @@ class CodegenTests(unittest.TestCase):
         self.assertIn("plot_group = VGroup(", self.src)
         self.assertIn(".arrange(DOWN", self.src)
 
-    def test_cap_annotation_is_labeled(self):
+    def test_bound_annotations_are_labeled(self):
+        # Both bounds the narration names must be marked on screen, not left to color.
         self.assertIn("24 CAP", self.src)
+        self.assertIn("5 FLOOR", self.src)
 
     def test_emits_citation_provenance(self):
         # PD-01: the differentiator must be visible IN the video -- each code callout

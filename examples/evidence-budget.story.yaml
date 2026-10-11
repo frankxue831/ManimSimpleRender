@@ -14,13 +14,14 @@ meta:
   source:
     repo_url: "https://github.com/frankxue831/ManimSimpleRender"
     repo_root: ".."
-  target_runtime_s: 50
+  target_runtime_s: 60
   voice: gtts
 theme:
   syntax_style: monokai
   resolution: "1080p30"
   accent_confirmed: "#3FB950"
   accent_contradicted: "#F85149"
+  background: "#1a1814"  # frankxue.dev's dark surface, so the embed has no visible frame
 beats:
   - id: per-line
     canvas:
@@ -49,6 +50,7 @@ beats:
           - { id: budget, fn: "min(24, max(5, 2 * x))", accent: confirmed, label: "Budget: floor 5, cap 24" }
         annotations:
           - { kind: hline, y: 24, accent: contradicted, label: "CAP" }
+          - { kind: hline, y: 5, accent: confirmed, label: "FLOOR" }
     code_callout:
       display: |
         wanted = max(BASE_TOKENS, TOKENS_PER_LINE * lines)
