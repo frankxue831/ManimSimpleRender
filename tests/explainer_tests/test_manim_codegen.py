@@ -59,9 +59,16 @@ def _line_after(src, line):
 
 
 CAPPED_RUN_TIME = f"run_time=min({VOICEOVER_VISUAL_CAP_S}, tracker.duration))"
+# safe_wait, not wait: a line no longer than the cap leaves 0 s to hold, and manim's
+# Scene.wait(0) raises; VoiceoverScene.safe_wait skips a hold of one frame or less.
 HOLD_FOR_REST_OF_SPEECH = (
-    f"self.wait(max(0, tracker.duration - min({VOICEOVER_VISUAL_CAP_S}, tracker.duration)))"
+    f"self.safe_wait(tracker.duration - min({VOICEOVER_VISUAL_CAP_S}, tracker.duration))"
 )
+
+
+def _hold_after(play):
+    """The hold expected right after ``play``, inside the same voiceover block."""
+    return play[: len(play) - len(play.lstrip())] + HOLD_FOR_REST_OF_SPEECH
 
 
 class CodegenTests(unittest.TestCase):
@@ -543,7 +550,7 @@ class CodegenTests(unittest.TestCase):
                 for visual in visuals:
                     self.assertIn(visual, play)
                 self.assertTrue(play.endswith(CAPPED_RUN_TIME), play)
-                self.assertEqual(_line_after(src, play).strip(), HOLD_FOR_REST_OF_SPEECH)
+                self.assertEqual(_line_after(src, play), _hold_after(play))
         self.assertNotIn("run_time=tracker.duration)", src)
 
     def test_voiced_region_on_a_code_canvas_is_capped_too(self):
@@ -566,6 +573,7 @@ class CodegenTests(unittest.TestCase):
         play = _play_after(src, "Talk about the floor.")
         self.assertIn("Create(box0)", play)
         self.assertTrue(play.endswith(CAPPED_RUN_TIME), play)
+        self.assertEqual(_line_after(src, play), _hold_after(play))
 
     def test_silent_region_play_keeps_its_fixed_run_time(self):
         # No narration to hold for: the highlight plays for a fixed second, then pauses.
@@ -590,11 +598,17 @@ class CodegenTests(unittest.TestCase):
         src = generate_scene(sb)
         play = _play_after(src, "with self.voiceover(text='n')")
         self.assertEqual(play.strip(), f"self.play(Create(curve0), {CAPPED_RUN_TIME}")
-        self.assertEqual(_line_after(src, play).strip(), HOLD_FOR_REST_OF_SPEECH)
+        self.assertEqual(_line_after(src, play), _hold_after(play))
 
     def test_example_plot_beats_never_stretch_a_play_over_a_voiceover(self):
         self.assertNotIn("run_time=tracker.duration", self.src)
         self.assertTrue(_play_after(self.src, "stops at a CAP").endswith(CAPPED_RUN_TIME))
+
+    def test_every_capped_play_holds_through_safe_wait(self):
+        # A voiced line of 0.75 s or less would emit wait(0) and kill the whole render.
+        self.assertEqual(self.src.count(CAPPED_RUN_TIME), 6)
+        self.assertEqual(self.src.count(HOLD_FOR_REST_OF_SPEECH), 6)
+        self.assertNotIn("self.wait(max(0, tracker.duration", self.src)
 
     def test_beat_with_no_visual_content_raises(self):
         # decision 3 / ARCH-03: a beat that yields no visual mobjects (non-plot canvas,
@@ -727,11 +741,7 @@ class CodegenTests(unittest.TestCase):
             f"run_time=min({VOICEOVER_VISUAL_CAP_S}, tracker.duration)",
             src,
         )
-        self.assertIn(
-            "self.wait(max(0, tracker.duration - "
-            f"min({VOICEOVER_VISUAL_CAP_S}, tracker.duration)))",
-            src,
-        )
+        self.assertIn(HOLD_FOR_REST_OF_SPEECH, src)
         # Old stretchy path must be gone from reveal steps.
         self.assertNotIn("run_time=tracker.duration)", src)
 

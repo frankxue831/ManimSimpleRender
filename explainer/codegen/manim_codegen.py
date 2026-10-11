@@ -289,11 +289,13 @@ def _emit_voiced_play(level, plays):
 
     The cap keeps a Create/FadeIn from stretching across the whole line (a dashed line
     drawing dash by dash before its label); the hold keeps VO length driving the pacing.
+    The hold is a safe_wait: a line no longer than the cap leaves 0 s, and manim's
+    Scene.wait(0) raises, while VoiceoverScene.safe_wait skips a hold of a frame or less.
     """
     cap = f"min({VOICEOVER_VISUAL_CAP_S}, tracker.duration)"
     return [
         f"{level}self.play({', '.join(plays)}, run_time={cap})",
-        f"{level}self.wait(max(0, tracker.duration - {cap}))",
+        f"{level}self.safe_wait(tracker.duration - {cap})",
     ]
 
 
@@ -466,10 +468,10 @@ def _emit_beat(beat, storyboard):
         # with its narration, if it has one); an untied one draws with the first region.
         plays.extend(f"Create({a})" for a, r in anns if (r or 1) == j + 1)
         if voiced:
-            out.extend(_emit_voiced_play(inner, plays))
+            out.extend(_emit_voiced_play(level, plays))
         else:
-            out.append(f"{INDENT}self.play({', '.join(plays)}, run_time=1.0)")
-            out.append(f"{INDENT}self.wait(0.6)")  # hold the silent highlight briefly
+            out.append(f"{level}self.play({', '.join(plays)}, run_time=1.0)")
+            out.append(f"{level}self.wait(0.6)")  # hold the silent highlight briefly
         prev_box = box
 
     # Any curves not yet revealed (and annotations if there were no regions).
