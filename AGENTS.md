@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file provides guidance to coding agents (Codex, Claude Code, and others) working in this repository. `CLAUDE.md` is a one-line pointer here.
+This file provides guidance to coding agents (Codex, Claude Code, and others) working in this repository. `CLAUDE.md` only imports this file (`@AGENTS.md`), so Claude Code reads the same guide.
 
 ## Project Overview
 
