@@ -21,14 +21,14 @@ def write_scene(folder, filename, name, base="Scene"):
 
 
 def simple_scene_tree(root):
-    """One file, one MovingCameraScene subclass (mirrors input/simple.py)."""
+    """One file, one MovingCameraScene subclass (mirrors examples/scenes/simple.py)."""
     write_scene(root, "simple.py", "DemoScene", base="MovingCameraScene")
     return root
 
 
 def duplicate_name_tree(root):
     """Two files in different subdirs both defining `class Demo(Scene)` -- the real
-    duplicate-class-name case (input/ has TestDebuggingWorkflowDetailed twice)."""
+    duplicate-class-name case (examples/scenes/ has TestDebuggingWorkflowDetailed twice)."""
     write_scene(os.path.join(root, "a"), "scene.py", "Demo")
     write_scene(os.path.join(root, "b"), "scene.py", "Demo")
     return root

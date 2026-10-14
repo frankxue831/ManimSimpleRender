@@ -17,7 +17,9 @@ from app.render.jobs import RenderJob
 
 class BuildCommandTests(unittest.TestCase):
     def setUp(self):
-        self.job = RenderJob(file_path="input/simple.py", scene_class="ImprovedMindMapAnimation07")
+        self.job = RenderJob(
+            file_path="examples/scenes/simple.py", scene_class="ImprovedMindMapAnimation07"
+        )
 
     def test_default_engine_exact_argv(self):
         cmd = build_command(
@@ -29,7 +31,7 @@ class BuildCommandTests(unittest.TestCase):
                 sys.executable,
                 "-m",
                 "manim",
-                "input/simple.py",
+                "examples/scenes/simple.py",
                 "ImprovedMindMapAnimation07",
                 "-qh",
                 "--media_dir",
@@ -57,7 +59,7 @@ class BuildCommandTests(unittest.TestCase):
 
     def test_file_and_scene_positionals(self):
         cmd = build_command(self.job, "-qm", "out")
-        self.assertEqual(cmd[3], "input/simple.py")  # file positional
+        self.assertEqual(cmd[3], "examples/scenes/simple.py")  # file positional
         self.assertEqual(cmd[4], "ImprovedMindMapAnimation07")  # scene positional
 
     def test_manim_base_command_dev_uses_interpreter_module(self):
@@ -76,7 +78,7 @@ class BuildCommandTests(unittest.TestCase):
     def test_build_command_accepts_explicit_base(self):
         cmd = build_command(self.job, "-qh", "out", base_command=["/opt/manim"])
         self.assertEqual(cmd[0], "/opt/manim")
-        self.assertEqual(cmd[1:3], ["input/simple.py", "ImprovedMindMapAnimation07"])
+        self.assertEqual(cmd[1:3], ["examples/scenes/simple.py", "ImprovedMindMapAnimation07"])
         self.assertEqual(cmd[3:], ["-qh", "--media_dir", "out"])
 
     def test_returns_list_of_str_and_is_pure(self):

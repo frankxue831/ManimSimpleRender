@@ -33,8 +33,10 @@ CONFIG = AppConfig(
     engines=[EngineOption("Default", ""), EngineOption("OpenGL", "--renderer=opengl")],
 )
 KNOWN = [
-    DiscoveredScene("input/proxy_pattern_scene.py", "ProxyScenario1Scene", "ProxyScenarioBase"),
-    DiscoveredScene("input/simple.py", "ImprovedMindMapAnimation07", "MovingCameraScene"),
+    DiscoveredScene(
+        "examples/scenes/proxy_pattern_scene.py", "ProxyScenario1Scene", "ProxyScenarioBase"
+    ),
+    DiscoveredScene("examples/scenes/simple.py", "ImprovedMindMapAnimation07", "MovingCameraScene"),
 ]
 
 
@@ -208,13 +210,13 @@ class ControllerTests(unittest.TestCase):
 
     def test_input_chosen_populates_scene_list(self):
         view, controller, _ = self._make()
-        controller.on_input_chosen("input")
+        controller.on_input_chosen("examples/scenes")
         self.assertEqual(view.scene_list.count(), 2)
 
     def test_discovery_runs_in_background_and_marks_pending(self):
         captured = []
         view, controller, _ = self._make(submit=lambda task: captured.append(task))
-        controller.on_input_chosen("input")
+        controller.on_input_chosen("examples/scenes")
         self.assertTrue(controller.discovery_pending)
         self.assertIn("discover", view.status_label.text().lower())
         self.assertEqual(view.scene_list.count(), 0)  # not applied until the task runs
@@ -225,7 +227,7 @@ class ControllerTests(unittest.TestCase):
     def test_pending_discovery_blocks_render(self):
         captured = []
         view, controller, created = self._make(submit=lambda task: captured.append(task))
-        controller.on_input_chosen("input")  # discovery pending (task not run)
+        controller.on_input_chosen("examples/scenes")  # discovery pending (task not run)
         controller.on_primary_clicked()  # try to render while pending
         self.assertEqual(controller.state, "idle")
         self.assertEqual(len(created), 0)  # blocked, no worker
@@ -896,7 +898,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_validation_failure_blocks_render(self):
         view, controller, created = self._make()
-        controller.on_input_chosen("input")
+        controller.on_input_chosen("examples/scenes")
         view.select_all_scenes()  # folders left empty -> validation fails
         controller.on_primary_clicked()
         self.assertEqual(controller.state, "idle")
@@ -944,7 +946,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_validation_failure_sets_error_level(self):
         view, controller, _ = self._make()
-        controller.on_input_chosen("input")
+        controller.on_input_chosen("examples/scenes")
         view.select_all_scenes()  # folders left empty -> validation fails
         controller.on_primary_clicked()
         self.assertEqual(view.status_label.property("level"), "error")
@@ -999,7 +1001,7 @@ class ControllerTests(unittest.TestCase):
         from PyQt5.QtWidgets import QApplication
 
         view, controller, _ = self._make()
-        controller.on_input_chosen("input")  # 2 known scenes
+        controller.on_input_chosen("examples/scenes")  # 2 known scenes
         view.select_all_scenes()
         view.set_output_folder("/out")
         view.copy_command_requested.emit()
@@ -1015,7 +1017,7 @@ class ControllerTests(unittest.TestCase):
         from PyQt5.QtWidgets import QApplication
 
         view, controller, _ = self._make()
-        controller.on_input_chosen("input")  # populated but nothing selected
+        controller.on_input_chosen("examples/scenes")  # populated but nothing selected
         QApplication.clipboard().setText("SENTINEL")
         view.copy_command_requested.emit()
         self.assertEqual(QApplication.clipboard().text(), "SENTINEL")  # unchanged
@@ -1330,7 +1332,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_select_all_intent_selects_all_scenes(self):
         view, controller, _ = self._make()
-        controller.on_input_chosen("input")  # populates 2 scenes
+        controller.on_input_chosen("examples/scenes")  # populates 2 scenes
         view.select_all_requested.emit()
         self.assertEqual(len(view.selected_scenes()), 2)
 
@@ -1390,7 +1392,7 @@ class ControllerTests(unittest.TestCase):
         summary.add(JobOutcome.SUCCESS)
         self._finish_worker(created[0], summary)
         self.assertTrue(view.rerun_button.isEnabled())
-        controller.on_input_chosen("input")  # re-browse rebuilds the list
+        controller.on_input_chosen("examples/scenes")  # re-browse rebuilds the list
         self.assertFalse(view.rerun_button.isEnabled())
 
     def test_cancelled_scenes_are_rerunnable_to_resume(self):
@@ -1699,7 +1701,7 @@ class ControllerTests(unittest.TestCase):
         # Regression: _restore_settings set the input folder but never ran discovery,
         # so the scene list was empty after a restart until the user re-clicked Browse.
         settings = FakeSettings()
-        settings.store["input_folder"] = "input"  # discover_fn is faked to return KNOWN
+        settings.store["input_folder"] = "examples/scenes"  # discover_fn is faked to return KNOWN
         view, controller, _ = self._make(settings=settings)
         self.assertEqual(view.scene_list.count(), len(KNOWN))  # discovery ran during restore
 

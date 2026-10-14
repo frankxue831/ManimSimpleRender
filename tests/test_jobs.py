@@ -12,23 +12,27 @@ import unittest
 from app.render.jobs import RenderJob, build_jobs, media_output_collisions
 from app.scenes.discovery import DiscoveredScene, discover_scenes
 
-INPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "input")
+INPUT_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "examples", "scenes"
+)
 
 
 class BuildJobsTests(unittest.TestCase):
     def test_one_job_per_selected_scene_bound_to_owning_file(self):
         selected = [
             DiscoveredScene(
-                "input/proxy_pattern_scene.py", "ProxyScenario1Scene", "ProxyScenarioBase"
+                "examples/scenes/proxy_pattern_scene.py", "ProxyScenario1Scene", "ProxyScenarioBase"
             ),
-            DiscoveredScene("input/simple.py", "ImprovedMindMapAnimation07", "MovingCameraScene"),
+            DiscoveredScene(
+                "examples/scenes/simple.py", "ImprovedMindMapAnimation07", "MovingCameraScene"
+            ),
         ]
         jobs = build_jobs(selected)
         self.assertEqual(
             jobs,
             [
-                RenderJob("input/proxy_pattern_scene.py", "ProxyScenario1Scene"),
-                RenderJob("input/simple.py", "ImprovedMindMapAnimation07"),
+                RenderJob("examples/scenes/proxy_pattern_scene.py", "ProxyScenario1Scene"),
+                RenderJob("examples/scenes/simple.py", "ImprovedMindMapAnimation07"),
             ],
         )
         self.assertEqual(len(jobs), 2)  # total == #selected; no N-file inflation
@@ -46,9 +50,12 @@ class BuildJobsTests(unittest.TestCase):
         self.assertTrue(all(j.scene_class == "TestDebuggingWorkflowDetailed" for j in jobs))
 
     def test_identical_pairs_deduped(self):
-        s = DiscoveredScene("input/simple.py", "ImprovedMindMapAnimation07", "MovingCameraScene")
+        s = DiscoveredScene(
+            "examples/scenes/simple.py", "ImprovedMindMapAnimation07", "MovingCameraScene"
+        )
         self.assertEqual(
-            build_jobs([s, s]), [RenderJob("input/simple.py", "ImprovedMindMapAnimation07")]
+            build_jobs([s, s]),
+            [RenderJob("examples/scenes/simple.py", "ImprovedMindMapAnimation07")],
         )
 
 
