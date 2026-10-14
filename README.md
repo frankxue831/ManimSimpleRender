@@ -6,7 +6,7 @@ fact against the repository it points at, so the video can't drift from the code
 The repo also contains a PyQt5 GUI for batch-rendering Manim scenes (see
 [Desktop GUI](#desktop-gui) below).
 
-![A frame sequence from the evidence-budget explainer video](docs/media/evidence-budget.gif)
+![A frame sequence from the evidence-budget explainer video](assets/evidence-budget.gif)
 
 *A clip from `examples/evidence-budget.story.yaml`, rendered by the Explainer Engine. Full video
 and write-up: <https://frankxue.dev/projects/explainer-engine/>.*
