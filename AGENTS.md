@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file provides guidance to Codex when working with code in this repository.
+This file provides guidance to coding agents (Codex, Claude Code, and others) working in this repository. `CLAUDE.md` is a one-line pointer here.
 
 ## Project Overview
 
@@ -71,8 +71,8 @@ manim input_file.py SceneName -qh --media_dir output_folder
 ### Tests, Formatting, Lint
 ```bash
 QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests
-black --check app tests main.py
-flake8 app tests main.py
+black --check app explainer tests main.py
+flake8 app explainer tests main.py
 ```
 Fast CI (`.github/workflows/ci.yml`) runs these on py3.12 + py3.13 without manim installed (services are Qt-free-testable; explainer tests skip their one manim-touching check). The nightly workflow installs the full render toolchain and runs the real-render e2e smoke.
 
@@ -100,7 +100,7 @@ Example storyboard: `examples/evidence-budget.story.yaml` (cites this repo's own
 - `tests/`: Headless unit tests. Run: `python -m unittest discover -s tests` (the window smoke test needs `QT_QPA_PLATFORM=offscreen`)
 - `docs/`: `adr/` (architecture decision records) and `concept-render.md`
 - `examples/`: Explainer storyboard examples (e.g., `evidence-budget.story.yaml`)
-- `input/`: Contains Manim Python scripts to be rendered (e.g., `proxy_pattern_scene.py`)
+- `examples/scenes/`: Demo Manim scenes for the GUI (e.g., `proxy_pattern_scene.py`). `test_debugging_workflow*.py` there are Manim scenes, not tests; pytest is pointed at `tests/` only
 - `output/`: Default output directory for rendered videos
 - `media/`: Manim-generated media files (images, texts, videos) - ignored by git
 - `assets/`: Static assets like SVG icons used in animations
@@ -109,7 +109,7 @@ Example storyboard: `examples/evidence-budget.story.yaml` (cites this repo's own
 
 ## Scene Development
 
-Example scenes should follow Manim patterns like `input/proxy_pattern_scene.py` which demonstrates:
+Example scenes should follow Manim patterns like `examples/scenes/proxy_pattern_scene.py` which demonstrates:
 - Proper Scene class inheritance
 - Helper methods for consistent arrow and label creation
 - Fixed coordinate positioning to prevent drift

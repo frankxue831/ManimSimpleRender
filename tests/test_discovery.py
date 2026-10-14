@@ -1,6 +1,6 @@
 """Tests for app.scenes.discovery (AST-based, import-free scene discovery). Batch 3.
 
-Runs against the real input/ tree and confirms: renderable vs excluded (abstract
+Runs against the real examples/scenes/ tree and confirms: renderable vs excluded (abstract
 base), MovingCameraScene recognition, scene-to-file binding (so duplicate class
 names across files stay distinct), and that discovery works with manim NOT
 installed (proving it never imports the scanned modules).
@@ -22,7 +22,9 @@ from app.scenes.discovery import (
 )
 from tests.support import fixtures
 
-INPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "input")
+INPUT_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "examples", "scenes"
+)
 
 
 def _write(tmp, name, body):

@@ -52,3 +52,10 @@ namespaces = false
 [tool.setuptools.package-data]
 "app.config" = ["config.v2.json"]
 "app.ui" = ["theme.qss"]
+
+[tool.pytest.ini_options]
+# CI runs `python -m unittest discover -s tests`; this keeps pytest on the same
+# tree. examples/scenes/test_debugging_workflow*.py are Manim demo scenes, not
+# tests, and must never be collected.
+testpaths = ["tests"]
+norecursedirs = ["examples", ".git", "build", "dist", "*.egg-info"]

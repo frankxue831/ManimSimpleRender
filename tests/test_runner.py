@@ -24,7 +24,7 @@ from app.render.process_session import _EOF, _creation_flags, _drain, _pump
 from app.render.runner import RenderRunner
 
 PY = sys.executable
-JOB = RenderJob("input/x.py", "X")
+JOB = RenderJob("examples/scenes/x.py", "X")
 
 
 def _windows_process_is_active(pid):

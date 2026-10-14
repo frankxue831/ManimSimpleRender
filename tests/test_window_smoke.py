@@ -254,10 +254,12 @@ class MainViewSmokeTests(unittest.TestCase):
         # Cond 2: duplicate class names must remain independently selectable.
         scenes = [
             DiscoveredScene(
-                "input/test_debugging_workflow.py", "TestDebuggingWorkflowDetailed", "Scene"
+                "examples/scenes/test_debugging_workflow.py",
+                "TestDebuggingWorkflowDetailed",
+                "Scene",
             ),
             DiscoveredScene(
-                "input/test_debugging_workflow_improved.py",
+                "examples/scenes/test_debugging_workflow_improved.py",
                 "TestDebuggingWorkflowDetailed",
                 "Scene",
             ),
