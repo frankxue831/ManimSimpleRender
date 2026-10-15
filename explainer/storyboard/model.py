@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 import yaml
 
-from explainer.storyboard.cites import parse_cite
+from explainer.storyboard.cites import is_vacuous_token, parse_cite
 from explainer.storyboard.diagram_layout import (
     ANCHORS,
     LayoutError,
@@ -146,6 +146,12 @@ def _require_evidence(cite, evidence, beat_id, where):
         raise StoryboardError(
             f"beat {beat_id!r}: {where} has a cite but no evidence -- a 'verified' "
             f"badge must prove something"
+        )
+    vacuous = [token for token in evidence if is_vacuous_token(token)]
+    if vacuous:
+        raise StoryboardError(
+            f"beat {beat_id!r}: {where} evidence {vacuous!r} can match without any "
+            f"source text -- a 'verified' badge must prove something"
         )
 
 

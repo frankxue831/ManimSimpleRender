@@ -11,6 +11,7 @@ meaningless.
 import os
 from dataclasses import asdict, dataclass
 
+from explainer.cite.verifier import match_evidence
 from explainer.plan.anchors import assign
 from explainer.plan.evidence import WeakCiteError, extract_evidence
 from explainer.storyboard.cites import format_cite
@@ -68,15 +69,31 @@ def _ascii(text, where):
     return text
 
 
+def _evidence_range(target, start, end, tokens):
+    """The part of ``start``..``end`` from the first to the last line *tokens* hold.
+
+    The citation gate fails a cite whose first or last line holds no
+    evidence, because such a range (one ending on a closing brace, say) can
+    shift by a line with every token still inside it. Citing this range
+    instead keeps a generated storyboard passing its gate by construction. It
+    is measured with the gate's own matcher, so the two cannot disagree.
+    """
+    offset = start - target.start
+    lines = target.text.split("\n")[offset : offset + (end - start) + 1]
+    first, last = match_evidence(lines, tokens).span
+    return start + first, start + last
+
+
 def _claims_for(beat, factsheet):
     cite = beat.caption_cite
     if cite is None:
         return []
     target = factsheet.targets[cite.focus_index]
     tokens = extract_evidence(target, cite.start, cite.end)
+    start, end = _evidence_range(target, cite.start, cite.end, tokens)
     return [
         {
-            "cite": format_cite(target.path, cite.start, cite.end),
+            "cite": format_cite(target.path, start, end),
             "evidence": list(tokens),
         }
     ]
@@ -86,6 +103,7 @@ def _code_beat(beat, factsheet):
     cite = beat.cite
     target = factsheet.targets[cite.focus_index]
     tokens = extract_evidence(target, cite.start, cite.end)
+    start, end = _evidence_range(target, cite.start, cite.end, tokens)
     out = {
         "id": beat.id,
         "canvas": {"kind": "code", "spec": {}},
@@ -93,7 +111,7 @@ def _code_beat(beat, factsheet):
         "code_callout": {
             "display": _ascii(beat.display, f"beat {beat.id!r} display"),
             "language": target.language or "text",
-            "cite": format_cite(target.path, cite.start, cite.end),
+            "cite": format_cite(target.path, start, end),
             "evidence": list(tokens),
         },
     }

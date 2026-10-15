@@ -4,15 +4,33 @@ the cited source lines, in the storyboard's source repo.
 This is the Explainer Engine's trust guarantee and its differentiator. A
 callout's ``display`` text is never trusted (it may be a teaching
 simplification); only the ``evidence`` tokens are checked against the real
-source. A wrong constant or a renamed symbol fails the gate.
+source (see :func:`match_evidence`):
+
+- each token must be found in the cited lines, a plain token as whole words
+  ("2" is not found in "24") and a ``/pattern/`` token as a regular expression;
+- a token that could match without any source text (blank, "//") never passes;
+- the first and last cited lines must each hold evidence, so a range that has
+  shifted since it was written fails instead of keeping its badge.
+
+It cannot see a change that leaves every token in place: a value that still
+appears on another cited line, or "2" becoming "2.5" (a dot is not a word
+character).
 """
 
 import os
 import re
 import subprocess
+from bisect import bisect_left
 from dataclasses import dataclass
+from typing import NamedTuple
 
-from explainer.storyboard.cites import is_regex_token, parse_cite
+from explainer.storyboard.cites import (
+    REGEX_ERRORS,
+    format_cite,
+    is_regex_token,
+    is_vacuous_token,
+    parse_cite,
+)
 from explainer.storyboard.model import iter_citation_targets
 
 _WS = re.compile(r"\s+")
@@ -23,9 +41,12 @@ class CiteFailure:
     beat_id: str
     cite: str
     missing: tuple
-    reason: str = "evidence_not_found"
+    reason: str = "evidence_not_found"  # or no_evidence | loose_range | an OSError name
+    detail: str = ""
 
     def __str__(self):
+        if self.detail:
+            return f"[{self.beat_id}] {self.cite}: {self.reason}: {self.detail}"
         return f"[{self.beat_id}] {self.cite}: {self.reason}: missing {list(self.missing)}"
 
 
@@ -42,6 +63,28 @@ class SourceStateFailure:
 
 def _normalize(text):
     return _WS.sub(" ", text).strip()
+
+
+# ASCII only on purpose: text in a script without spaces between words (CJK)
+# has no word boundary to find, so a token there keeps substring matching.
+_WORD_CHAR = re.compile(r"[A-Za-z0-9_]")
+
+
+def _plain_token_pattern(token):
+    """Regex for a normalized plain *token* that matches it only as whole words.
+
+    Where the token starts or ends with a word character, the neighbouring
+    source character on that side may not be one: "2" is not found in "24",
+    nor "TOKENS" in "MAX_TOKENS". An edge that is punctuation needs no
+    boundary, so '"dirty_tree"' and "powf(" match as before. A dot is not a
+    word character, so "2" is still found in "2.5".
+    """
+    pattern = re.escape(token)
+    if _WORD_CHAR.match(token[0]):
+        pattern = r"(?<![A-Za-z0-9_])" + pattern
+    if _WORD_CHAR.match(token[-1]):
+        pattern += r"(?![A-Za-z0-9_])"
+    return pattern
 
 
 def _dirty_lines(status_stdout, repo_root, ignore_paths=()):
@@ -84,26 +127,105 @@ def _read_cited(repo_root, cite):
         lines = handle.read().splitlines()
     if start < 1 or end > len(lines) or start > end:
         raise IndexError(f"cite range {start}-{end} out of bounds (file has {len(lines)} lines)")
-    return "\n".join(lines[start - 1 : end])
+    return lines[start - 1 : end]
 
 
-def _missing_evidence(text, evidence):
-    """Return evidence tokens NOT found in ``text``. A ``/pattern/`` token is a
-    regex; everything else is a whitespace-normalized substring match."""
-    normalized = _normalize(text)
-    missing = []
+class EvidenceMatch(NamedTuple):
+    """What :func:`match_evidence` found in a cited range."""
+
+    missing: list  # tokens found nowhere in the cited lines
+    span: tuple | None  # (first, last) 0-based cited lines that matches touch
+
+
+def _normalized_lines(lines):
+    """``_normalize`` of the joined lines, plus the line each character came from."""
+    pieces, owners = [], []
+    for index, line in enumerate(lines):
+        piece = _normalize(line)
+        if not piece:
+            continue
+        if pieces:
+            pieces.append(" ")
+            owners.append(index)
+        pieces.append(piece)
+        owners.extend([index] * len(piece))
+    return "".join(pieces), owners
+
+
+def _matched_lines(pattern, text, line_of):
+    """``(first, last)`` line of every match of *pattern* in *text*, overlaps included."""
+    found = []
+    match = pattern.search(text)
+    while match:
+        found.append((line_of(match.start()), line_of(max(match.start(), match.end() - 1))))
+        match = pattern.search(text, match.start() + 1)
+    return found
+
+
+def match_evidence(lines, evidence):
+    """Find each evidence token in the cited ``lines`` (one string per line).
+
+    A ``/pattern/`` token is a regular expression searched in the lines joined
+    by newlines; a pattern that does not compile counts as missing. Any other
+    token must appear whole-word (see :func:`_plain_token_pattern`) in the
+    whitespace-normalized text, so it may wrap across lines. A token that can
+    match without any source text (``is_vacuous_token``) counts as missing.
+
+    The span is what the gate's edge check reads, and what the planner trims
+    its cites to, so the two cannot disagree about which lines hold evidence.
+    """
+    raw = "\n".join(lines)
+    newlines = [offset for offset, char in enumerate(raw) if char == "\n"]
+    flat, owners = _normalized_lines(lines)
+    missing, matched = [], []
     for token in evidence:
         token = str(token)
+        if is_vacuous_token(token):
+            missing.append(token)
+            continue
         if is_regex_token(token):
             try:
-                found = re.search(token[1:-1], text) is not None
-            except re.error:
-                found = False  # a malformed pattern cannot be verified -> count as missing
-            if not found:
+                pattern = re.compile(token[1:-1])
+            except REGEX_ERRORS:
                 missing.append(token)
-        elif _normalize(token) not in normalized:
+                continue
+            found = _matched_lines(pattern, raw, lambda offset: bisect_left(newlines, offset))
+        else:
+            pattern = re.compile(_plain_token_pattern(_normalize(token)))
+            found = _matched_lines(pattern, flat, owners.__getitem__)
+        if found:
+            matched.extend(found)
+        else:
             missing.append(token)
-    return missing
+    if not matched:
+        return EvidenceMatch(missing, None)
+    firsts, lasts = zip(*matched)
+    return EvidenceMatch(missing, (min(firsts), max(lasts)))
+
+
+def _cite_failure(beat_id, cite, lines, evidence):
+    """The one failure a readable cite earns, or None when it verifies."""
+    found = match_evidence(lines, evidence)
+    if found.missing:
+        return CiteFailure(beat_id, cite, tuple(found.missing))
+    if found.span is None:
+        return CiteFailure(
+            beat_id, cite, (), "no_evidence", "nothing to check, so nothing verified"
+        )
+    first, last = found.span
+    if (first, last) == (0, len(lines) - 1):
+        return None
+    # An edge line without evidence lets the range shift unnoticed: after a
+    # line is inserted above the code, every token can still be in range.
+    path, start, _ = parse_cite(cite)
+    tight = format_cite(path, start + first, start + last)
+    return CiteFailure(
+        beat_id,
+        cite,
+        (),
+        "loose_range",
+        f"evidence covers only {tight}; cite that, or add evidence on the first and last lines",
+    )
 
 
 _HEX = frozenset("0123456789abcdef")
@@ -220,13 +342,13 @@ def verify_storyboard(storyboard, repo_root=None, ignore_paths=()):
     for beat in storyboard.beats:
         for cite, evidence in iter_citation_targets(beat):
             try:
-                text = _read_cited(root, cite)
+                lines = _read_cited(root, cite)
             except (OSError, ValueError, IndexError) as exc:
                 failures.append(
                     CiteFailure(beat.id, cite, tuple(evidence), reason=type(exc).__name__)
                 )
                 continue
-            missing = _missing_evidence(text, evidence)
-            if missing:
-                failures.append(CiteFailure(beat.id, cite, tuple(missing)))
+            failure = _cite_failure(beat.id, cite, lines, evidence)
+            if failure:
+                failures.append(failure)
     return failures

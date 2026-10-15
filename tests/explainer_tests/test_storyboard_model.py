@@ -196,6 +196,42 @@ class LoadStoryboardTests(unittest.TestCase):
                 with self.assertRaises(StoryboardError):
                     self._load(text)
 
+    # The same hole one level down: a token that matches ANY text proves
+    # nothing about the cited lines. A blank token normalizes to "", which is
+    # a substring of everything, and a /pattern/ that matches the empty string
+    # ("//", "/a*/") is found in any text, so the gate passed both.
+
+    def _with_evidence(self, block):
+        return textwrap.dedent("""
+            version: 1
+            meta: { title: "T", source: { repo_root: "/tmp/repo" } }
+            beats:
+              - id: b1
+                canvas: { kind: plot, spec: {} }
+                narration: "n"
+                %s
+            """) % block
+
+    def test_token_that_matches_any_text_rejected(self):
+        blocks = {
+            "callout": 'code_callout: { display: "x", language: rust, cite: "a.rs:1", '
+            'evidence: ["foo", %s] }',
+            "claim": 'claims: [{ cite: "a.rs:5", evidence: ["foo", %s] }]',
+        }
+        for where, block in blocks.items():
+            for token in ('""', '"   "', '"//"', '"/a*/"'):
+                with self.subTest(where=where, token=token):
+                    with self.assertRaises(StoryboardError) as cm:
+                        self._load(self._with_evidence(block % token))
+                    self.assertIn("prove something", str(cm.exception))
+
+    def test_token_that_needs_real_text_still_loads(self):
+        # The check must not overshoot: surrounding spaces are normalized away
+        # by the gate, and a regex that cannot match empty text is real evidence.
+        block = 'claims: [{ cite: "a.rs:5", evidence: ["  foo  ", "/fo+/", "/(?=bar)/"] }]'
+        sb = self._load(self._with_evidence(block))
+        self.assertEqual(sb.beats[0].claims[0].evidence, ("  foo  ", "/fo+/", "/(?=bar)/"))
+
     def test_loads_real_example_storyboard(self):
         repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         example = os.path.join(repo, "examples", "evidence-budget.story.yaml")

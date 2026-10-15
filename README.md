@@ -2,9 +2,10 @@
 
 Home of the **Explainer Engine**: turn a short storyboard YAML that cites real source lines into a
 narrated, animated Manim video. Before anything is rendered, a citation gate checks that the
-cited source lines still contain the evidence the storyboard declares for them, and stops the
-render if any do not. The gate checks citations, not narration. The repo also contains a PyQt5
-GUI for batch-rendering Manim scenes (see [Desktop GUI](#desktop-gui) below).
+cited source lines still contain the evidence the storyboard declares for them (as whole words,
+with some on the first and the last cited line), and stops the render if any do not. The gate
+checks citations, not narration. The repo also contains a PyQt5 GUI for batch-rendering Manim
+scenes (see [Desktop GUI](#desktop-gui) below).
 
 ![Animated plot: a green token budget starts at a floor of 5, rises with lines cited, and levels off at 24, above a simplified two-line version of the code that computes it](assets/evidence-budget.gif)
 
