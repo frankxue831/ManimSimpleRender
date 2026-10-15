@@ -6,6 +6,7 @@ an unsafe plot function is rejected.
 """
 
 import dataclasses
+import glob
 import os
 import unittest
 
@@ -78,6 +79,11 @@ class CodegenTests(unittest.TestCase):
 
     def test_generated_source_is_valid_python(self):
         compile(self.src, "<generated>", "exec")  # raises SyntaxError if malformed
+
+    def test_every_shipped_storyboard_generates_valid_python(self):
+        for path in sorted(glob.glob(os.path.join(os.path.dirname(EXAMPLE), "*.story.yaml"))):
+            with self.subTest(storyboard=os.path.basename(path)):
+                compile(generate_scene(load_storyboard(path)), "<generated>", "exec")
 
     def test_emits_voiceover_scene(self):
         self.assertIn("class ExplainerVideo(VoiceoverScene):", self.src)

@@ -1,0 +1,153 @@
+# Explainer Engine storyboard: what the citation gate checks before a render.
+# It cites this repository's own gate (explainer/cite/verifier.py), its render
+# adapter and code generator, and the evidence-budget example, so
+# `explainer verify examples/citation-gate.story.yaml` works from any checkout.
+#
+# No meta.source.commit, for the same reason as evidence-budget.story.yaml: the
+# example lives in the repo it cites, so a pinned commit would stop matching HEAD
+# on the next commit. The on-screen badge therefore says "verified" (no commit).
+#
+# First drafted with `explainer plan` (provider grok), then rewritten by hand;
+# the opening display-versus-evidence beat is new.
+version: 1
+meta:
+  title: "What the verified badge actually promises"
+  subtitle: "Explainer Engine - the citation gate"
+  source:
+    repo_url: "https://github.com/frankxue831/ManimSimpleRender"
+    repo_root: ".."
+  target_runtime_s: 75
+  voice: gtts
+theme:
+  syntax_style: monokai
+  resolution: "1080p30"
+  accent_confirmed: "#3FB950"
+  accent_contradicted: "#F85149"
+  background: "#1a1814"  # frankxue.dev's dark surface, so the embed has no visible frame
+beats:
+  - id: display-vs-evidence
+    canvas:
+      kind: code
+    code_callout:
+      display: |
+        display: "TOKENS_PER_LINE = 2"
+        cite: "explainer/plan/evidence.py:56"
+        evidence: ["TOKENS_PER_LINE", "2"]
+      language: yaml
+      cite: "examples/evidence-budget.story.yaml:39-42"
+      evidence:
+        - 'display: "TOKENS_PER_LINE = 2"'
+        - 'cite: "explainer/plan/evidence.py:56"'
+        - 'evidence: ["TOKENS_PER_LINE", "2"]'
+      regions:
+        - { lines: [1], emphasis: normal, narration: "Display is what you see. It may be simplified, so the gate never checks it." }
+        - { lines: [2, 3], emphasis: strong, narration: "Evidence is what the gate checks, in the cited lines." }
+    caption: "display may be simplified -- evidence must be in the cited lines"
+    narration: >
+      Every snippet comes from a storyboard entry like this.
+  - id: whole-words
+    canvas:
+      kind: code
+    code_callout:
+      display: |
+        pattern = re.escape(token)
+        if _WORD_CHAR.match(token[0]):
+            pattern = r"(?<![A-Za-z0-9_])" + pattern
+        if _WORD_CHAR.match(token[-1]):
+            pattern += r"(?![A-Za-z0-9_])"
+      language: python
+      cite: "explainer/cite/verifier.py:83-87"
+      evidence:
+        - "pattern = re.escape(token)"
+        - "if _WORD_CHAR.match(token[0]):"
+        - 'pattern = r"(?<![A-Za-z0-9_])" + pattern'
+        - "if _WORD_CHAR.match(token[-1]):"
+        - 'pattern += r"(?![A-Za-z0-9_])"'
+      regions:
+        - { lines: [2, 3, 4, 5], emphasis: strong, narration: "A plain token must match whole words, so a two is not found in twenty-four." }
+    claims:
+      - cite: "explainer/cite/verifier.py:71"
+        evidence: ['_WORD_CHAR = re.compile(r"[A-Za-z0-9_]")']
+      - cite: "explainer/cite/verifier.py:216"
+        evidence: ["pattern = re.compile(_plain_token_pattern(_normalize(token)))"]
+      - cite: "explainer/cite/verifier.py:127"
+        evidence: ['with open(os.path.join(repo_root, path), encoding="utf-8") as handle:']
+    caption: 'plain tokens match whole words: "2" is not found in "24"'
+    narration: >
+      The gate reads those lines from disk.
+  - id: edge-lines
+    canvas:
+      kind: code
+    code_callout:
+      display: |
+        first, last = found.span
+        if (first, last) == (0, len(lines) - 1):
+            return None
+        return CiteFailure(..., "loose_range", ...)
+      language: python
+      cite: "explainer/cite/verifier.py:237-248"
+      evidence:
+        - "first, last = found.span"
+        - "if (first, last) == (0, len(lines) - 1): return None"
+        - "return CiteFailure("
+        - '"loose_range",'
+      regions:
+        - { lines: [1, 2, 3], emphasis: normal, narration: "If code moves down a line, the range's first line usually loses its evidence." }
+        - { lines: [4], emphasis: strong, narration: "Then the cite fails instead of keeping its badge." }
+    claims:
+      - cite: "explainer/cite/verifier.py:373-375"
+        evidence: ["failure = _cite_failure(beat.id, cite, lines, evidence) if failure: failures.append(failure)"]
+    caption: "evidence must sit on the first and the last cited line"
+    narration: >
+      Evidence must also reach both ends of the range.
+  - id: pinned-commit
+    canvas:
+      kind: code
+    code_callout:
+      display: |
+        if not actual.lower().startswith(claimed):
+            failures.append("commit_mismatch")
+        if not source.allow_dirty:
+            if repo_dirty_lines(root):
+                failures.append("dirty_tree")
+      language: python
+      cite: "explainer/cite/verifier.py:328-342"
+      evidence:
+        - "if not actual.lower().startswith(claimed):"
+        - 'failures.append( SourceStateFailure( "commit_mismatch",'
+        - "if not source.allow_dirty:"
+        - "lines = repo_dirty_lines(root, ignore_paths)"
+        - 'if lines: changes = len(lines) failures.append( SourceStateFailure( "dirty_tree",'
+      regions:
+        - { lines: [1, 2], emphasis: normal, narration: "Then HEAD must match that commit." }
+        - { lines: [3, 4, 5], emphasis: normal, narration: "And uncommitted changes fail, unless allowed." }
+    claims:
+      - cite: "explainer/cite/verifier.py:301-302"
+        evidence: ["if not source.commit: return []"]
+      - cite: "explainer/cite/verifier.py:361-363"
+        evidence: ["failures = list( verify_source_state(storyboard.source, repo_root=root, ignore_paths=ignore_paths) )"]
+      - cite: "explainer/codegen/manim_codegen.py:281"
+        evidence: ['badge = f"verified @ {source.commit}" if source.commit else "verified"']
+    caption: "a pinned commit must be HEAD, on a clean tree unless allowed"
+    narration: >
+      A storyboard can also pin a commit for the badge to name.
+  - id: stops-the-render
+    canvas:
+      kind: code
+    code_callout:
+      display: |
+        failures = verify_storyboard(storyboard)
+        if failures:
+            raise CitationGateError(failures)
+        source = generate_scene(storyboard, ...)
+      language: python
+      cite: "explainer/render/adapter.py:73-77"
+      evidence:
+        - "failures = verify_storyboard(storyboard) if failures: raise CitationGateError(failures)"
+        - "raise CitationGateError(failures) source = generate_scene(storyboard, scene_name=SCENE_NAME, lang=lang)"
+      regions:
+        - { lines: [1, 2, 3], emphasis: strong, narration: "One failure stops the render before any scene code exists." }
+        - { lines: [4], emphasis: normal, narration: "So a badge vouches for the cited evidence when the video was made, not for the explanation." }
+    caption: "the gate checks citations, not narration"
+    narration: >
+      All of this runs before rendering.
