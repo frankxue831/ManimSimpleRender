@@ -1,7 +1,7 @@
 from manim import *
 from pathlib import Path
 
-ASSETS = Path(__file__).parent.parent / "assets"
+ASSETS = Path(__file__).resolve().parents[2] / "assets"  # repo-root assets/
 
 # Helper methods (can be part of a base class or duplicated if simple enough)
 def _arrow_with_label(scene, start, end, txt, color=WHITE, is_curve=False, curve_angle=PI/6):

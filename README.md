@@ -1,12 +1,12 @@
 # ManimSimpleRender
 
 Home of the **Explainer Engine**: turn a short storyboard YAML that cites real source lines into a
-narrated, animated Manim video. Before anything is rendered, a citation gate checks every cited
-fact against the repository it points at, so the video can't drift from the code it explains.
-The repo also contains a PyQt5 GUI for batch-rendering Manim scenes (see
-[Desktop GUI](#desktop-gui) below).
+narrated, animated Manim video. Before anything is rendered, a citation gate checks that the
+cited source lines still contain the evidence the storyboard declares for them, and stops the
+render if any do not. The gate checks citations, not narration. The repo also contains a PyQt5
+GUI for batch-rendering Manim scenes (see [Desktop GUI](#desktop-gui) below).
 
-![A frame sequence from the evidence-budget explainer video](assets/evidence-budget.gif)
+![Animated plot: a green token budget starts at a floor of 5, rises with lines cited, and levels off at 24, above a simplified two-line version of the code that computes it](assets/evidence-budget.gif)
 
 *A clip from `examples/evidence-budget.story.yaml`, rendered by the Explainer Engine. Full video
 and write-up: <https://frankxue.dev/projects/explainer-engine/>.*
@@ -14,6 +14,9 @@ and write-up: <https://frankxue.dev/projects/explainer-engine/>.*
 ## Quick start
 
 ```bash
+git clone https://github.com/frankxue831/ManimSimpleRender.git
+cd ManimSimpleRender
+python3.12 -m venv .venv && source .venv/bin/activate   # Python 3.12 or 3.13
 pip install -e ".[explainer]"
 explainer verify examples/evidence-budget.story.yaml
 explainer render examples/evidence-budget.story.yaml -o out.mp4
@@ -26,8 +29,9 @@ explainer render examples/evidence-budget.story.yaml -o out.mp4
 - **Network access for narration.** The only supported voice is `gtts` (manim-voiceover's
   Google Text-to-Speech service, a live Google endpoint). No API key or credential is needed,
   and there is no offline TTS fallback: synthesis is retried with backoff, then the render fails.
-  Audio is cached by narration text in `~/.cache/explainer/voiceovers` (override with
-  `EXPLAINER_TTS_CACHE`), so a re-render of unchanged narration reuses the cache.
+  Audio is cached by narration text, one folder per language, under
+  `~/.cache/explainer/voiceovers` (override with `EXPLAINER_TTS_CACHE`), so a re-render of
+  unchanged narration reuses the cache.
 
 **Reproducibility.** `examples/evidence-budget.story.yaml` is the storyboard behind the video
 above. The storyboard for the harness-field explainer on the project page is not public and is
