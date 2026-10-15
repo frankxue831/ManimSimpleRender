@@ -4,9 +4,9 @@ This file provides guidance to coding agents (Codex, Claude Code, and others) wo
 
 ## Project Overview
 
-ManimSimpleRender is a PyQt5-based GUI application for rendering Manim animations. It provides a simple interface to batch render multiple scenes from Python files containing Manim animations.
+ManimSimpleRender holds two products. The Explainer Engine (`explainer/`) is a CLI that compiles storyboard YAML through a citation gate into deterministic Manim codegen and a narrated video. The desktop GUI (`app/`) is a PyQt5 application that discovers the Manim scenes in a folder of Python files and batch-renders the ones the user selects.
 
-The repository holds two verticals sharing one Qt-free render core (`app/render`), per `docs/adr/0001-render-core-boundary.md`: the GUI under `app/`, and `explainer/`, a CLI that compiles storyboard YAML through a citation gate into deterministic Manim codegen and a narrated video. `explainer/` may import only `app.render.*` (never `app.render.worker`); nothing imports back from it. The boundary is enforced by `tests/test_architecture.py`.
+The two verticals share one Qt-free render core (`app/render`), per `docs/adr/0001-render-core-boundary.md`. `explainer/` may import only `app.render.*` (never `app.render.worker`); nothing imports back from it. The boundary is enforced by `tests/test_architecture.py`. `concept_render/`, a smaller source-checkout-only CLI for silent concept drafts (`docs/concept-render.md`), also imports `app.render`; `tests/test_architecture.py` does not scan it.
 
 ## Architecture
 
@@ -22,7 +22,7 @@ Services never import the UI; only the render worker imports Qt.
 - **app/render/**: `jobs.py` (`RenderJob` + `build_jobs` + `media_output_collisions`), `command_builder.py` (pure manim argv), `runner.py` (Qt-free subprocess), `process_session.py` (bounded, Qt-free supervision of one render subprocess: process-group spawn, terminate->kill escalation), `worker.py` (QThread adapter), `aggregation.py` (`RenderSummary`), `quality.py` (canonical manim quality ladder; see `docs/adr/0001-render-core-boundary.md`).
 - **app/ui/**: `main_view.py` (passive window), `sections.py`, `theme.py` + `theme.qss` (external dark theme), `controller.py` (state machine + QSettings).
 - **app/validation.py**: Pure pre-render validation.
-- **explainer/**: `storyboard/` (YAML IR + loader), `cite/` (citation gate: verifies cited lines against the source repo at a pinned commit), `codegen/` (deterministic Manim scene emission, diagram canvas), `plan/` (LLM planner drafting storyboards from real code; providers behind a fake-able protocol), `render/adapter.py` (the only cross-package edge, into `app.render`), `cli.py` (`explainer verify|render|plan`).
+- **explainer/**: `storyboard/` (YAML IR + loader), `cite/` (citation gate: checks that the cited lines contain the evidence the storyboard declares; if the storyboard names a commit, also that HEAD matches it and the tree is clean unless `allow_dirty`), `codegen/` (deterministic Manim scene emission, diagram canvas), `plan/` (LLM planner drafting storyboards from real code; providers behind a fake-able protocol), `render/adapter.py` (the only cross-package edge, into `app.render`), `cli.py` (`explainer verify|render|plan`).
 - **tests/**: Headless unit tests plus `tests/e2e/` (fake-manim GUI/worker tiers + a real-render smoke that CI runs nightly), `tests/explainer_tests/`, `tests/support/` (shared fixtures), and `tests/test_architecture.py` (executable ADR 0001 boundary).
 
 ## Key Components

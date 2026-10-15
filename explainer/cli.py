@@ -2,7 +2,7 @@
 
     explainer plan --repo R --focus F --topic T -o story.yaml   # draft from code
     explainer verify story.yaml                 # citation gate only
-    explainer render story.yaml -o out.mp4      # codegen -> verify -> render
+    explainer render story.yaml -o out.mp4      # verify -> codegen -> render
 
 Exit codes: 0 ok, 2 validation/schema error, 3 citation miss, 4 render failure,
 5 planner LLM failure, 6 planner produced nothing usable.
