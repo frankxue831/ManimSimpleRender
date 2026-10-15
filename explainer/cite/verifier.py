@@ -10,11 +10,11 @@ source (see :func:`match_evidence`):
   ("2" is not found in "24") and a ``/pattern/`` token as a regular expression;
 - a token that could match without any source text (blank, "//") never passes;
 - the first and last cited lines must each hold evidence, so a range that has
-  shifted since it was written fails instead of keeping its badge.
+  shifted since it was written usually fails instead of keeping its badge.
 
 It cannot see a change that leaves every token in place: a value that still
-appears on another cited line, or "2" becoming "2.5" (a dot is not a word
-character).
+appears on another cited line, "2" becoming "2.5" (a dot is not a word
+character), or a shift that moves a line holding some token onto an edge.
 """
 
 import os
@@ -22,6 +22,7 @@ import re
 import subprocess
 from bisect import bisect_left
 from dataclasses import dataclass
+from functools import partial
 from typing import NamedTuple
 
 from explainer.storyboard.cites import (
@@ -41,7 +42,7 @@ class CiteFailure:
     beat_id: str
     cite: str
     missing: tuple
-    reason: str = "evidence_not_found"  # or no_evidence | loose_range | an OSError name
+    reason: str = "evidence_not_found"  # or no_evidence | loose_range | a read error's name
     detail: str = ""
 
     def __str__(self):
@@ -134,7 +135,7 @@ class EvidenceMatch(NamedTuple):
     """What :func:`match_evidence` found in a cited range."""
 
     missing: list  # tokens found nowhere in the cited lines
-    span: tuple | None  # (first, last) 0-based cited lines that matches touch
+    span: tuple | None  # (first, last) 0-based cited lines holding visible matched text
 
 
 def _normalized_lines(lines):
@@ -152,14 +153,32 @@ def _normalized_lines(lines):
     return "".join(pieces), owners
 
 
-def _matched_lines(pattern, text, line_of):
-    """``(first, last)`` line of every match of *pattern* in *text*, overlaps included."""
-    found = []
-    match = pattern.search(text)
-    while match:
-        found.append((line_of(match.start()), line_of(max(match.start(), match.end() - 1))))
-        match = pattern.search(text, match.start() + 1)
-    return found
+def _matches(pattern, text):
+    """Every match of *pattern* in *text*, overlapping ones included.
+
+    Bounded by the text length, not by the search coming up empty:
+    ``pattern.search(text, pos)`` treats a ``pos`` past the end as the end, so
+    a zero-width match there would otherwise repeat forever.
+    """
+    pos = 0
+    while pos <= len(text):
+        match = pattern.search(text, pos)
+        if match is None:
+            return
+        yield match
+        pos = match.start() + 1
+
+
+def _visible_span(match, line_of):
+    """``(first, last)`` line of the match's visible characters, or None when it
+    has none (zero-width, or whitespace only). Otherwise a pattern that starts
+    by matching whitespace would stretch onto the blank line above the code."""
+    body = match.group(0)
+    if not body.strip():
+        return None
+    first = match.start() + len(body) - len(body.lstrip())
+    last = match.end() - 1 - (len(body) - len(body.rstrip()))
+    return line_of(first), line_of(last)
 
 
 def match_evidence(lines, evidence):
@@ -171,13 +190,16 @@ def match_evidence(lines, evidence):
     whitespace-normalized text, so it may wrap across lines. A token that can
     match without any source text (``is_vacuous_token``) counts as missing.
 
-    The span is what the gate's edge check reads, and what the planner trims
-    its cites to, so the two cannot disagree about which lines hold evidence.
+    The span runs from the first to the last line that a visible character of
+    any match lies on. It is what the gate's edge check reads and what the
+    planner trims its cites to, so the two cannot disagree. Every match counts,
+    so a regex is searched to the end of the range rather than to its first
+    match: one with nested quantifiers can take exponential time.
     """
     raw = "\n".join(lines)
-    newlines = [offset for offset, char in enumerate(raw) if char == "\n"]
+    raw_line = partial(bisect_left, [offset for offset, char in enumerate(raw) if char == "\n"])
     flat, owners = _normalized_lines(lines)
-    missing, matched = [], []
+    missing, spans = [], []
     for token in evidence:
         token = str(token)
         if is_vacuous_token(token):
@@ -189,17 +211,17 @@ def match_evidence(lines, evidence):
             except REGEX_ERRORS:
                 missing.append(token)
                 continue
-            found = _matched_lines(pattern, raw, lambda offset: bisect_left(newlines, offset))
+            text, line_of = raw, raw_line
         else:
             pattern = re.compile(_plain_token_pattern(_normalize(token)))
-            found = _matched_lines(pattern, flat, owners.__getitem__)
-        if found:
-            matched.extend(found)
-        else:
+            text, line_of = flat, owners.__getitem__
+        matches = list(_matches(pattern, text))
+        if not matches:
             missing.append(token)
-    if not matched:
+        spans.extend(span for span in (_visible_span(m, line_of) for m in matches) if span)
+    if not spans:
         return EvidenceMatch(missing, None)
-    firsts, lasts = zip(*matched)
+    firsts, lasts = zip(*spans)
     return EvidenceMatch(missing, (min(firsts), max(lasts)))
 
 
@@ -210,7 +232,7 @@ def _cite_failure(beat_id, cite, lines, evidence):
         return CiteFailure(beat_id, cite, tuple(found.missing))
     if found.span is None:
         return CiteFailure(
-            beat_id, cite, (), "no_evidence", "nothing to check, so nothing verified"
+            beat_id, cite, (), "no_evidence", "no token matches visible text in the cited lines"
         )
     first, last = found.span
     if (first, last) == (0, len(lines) - 1):

@@ -76,7 +76,9 @@ def _evidence_range(target, start, end, tokens):
     evidence, because such a range (one ending on a closing brace, say) can
     shift by a line with every token still inside it. Citing this range
     instead keeps a generated storyboard passing its gate by construction. It
-    is measured with the gate's own matcher, so the two cannot disagree.
+    is measured with the gate's own matcher, so the two cannot disagree. When
+    the token budget runs out before the last lines of a long cite, those lines
+    are cut too, so the label can then cover less than the display shows.
     """
     offset = start - target.start
     lines = target.text.split("\n")[offset : offset + (end - start) + 1]

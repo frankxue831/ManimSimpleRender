@@ -9,8 +9,8 @@ import re
 
 # What compiling a /pattern/ token can raise: re.error for bad syntax,
 # OverflowError for a repeat count the engine cannot store, RecursionError
-# for deeply nested groups.
-REGEX_ERRORS = (re.error, OverflowError, RecursionError)
+# for deeply nested groups, ValueError for incompatible flags like (?a)(?u).
+REGEX_ERRORS = (re.error, OverflowError, RecursionError, ValueError)
 
 
 def parse_cite(cite):
@@ -36,7 +36,7 @@ def format_cite(path, start, end):
 
 def is_regex_token(token):
     """True when *token* uses the ``/pattern/`` evidence spelling, which the
-    verifier matches as a regular expression rather than a literal substring.
+    verifier searches as a regular expression instead of matching whole words.
 
     The ONE definition of that convention: the verifier interprets such
     tokens, and evidence generation must refuse to emit one (it would change

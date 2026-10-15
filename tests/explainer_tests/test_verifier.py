@@ -10,11 +10,12 @@ own explainer/plan/evidence.py, so moving those lines means updating its cites.
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
 
-from explainer.cite.verifier import verify_storyboard
+from explainer.cite.verifier import match_evidence, verify_storyboard
 from explainer.storyboard.model import (
     Beat,
     Canvas,
@@ -100,8 +101,9 @@ class VerifierTests(unittest.TestCase):
 
     def test_regex_the_engine_cannot_compile_fails_instead_of_raising(self):
         # ARCH-12 beyond re.error: Python raises OverflowError for a repeat
-        # count it cannot store and RecursionError for deeply nested groups.
-        for token in ("/a{99999999999}/", "/" + "(" * 1000 + ")" * 1000 + "/"):
+        # count it cannot store, RecursionError for deeply nested groups and
+        # ValueError for incompatible inline flags.
+        for token in ("/a{99999999999}/", "/" + "(" * 1000 + ")" * 1000 + "/", "/(?a)(?u)x/"):
             with self.subTest(token=token[:16]):
                 sb = _storyboard(self._callout("x.rs:2", [token]), repo_root=self.dir)
                 failures = verify_storyboard(sb)  # must not raise
@@ -237,6 +239,31 @@ class TightRangeTests(unittest.TestCase):
     def test_regex_evidence_can_hold_an_edge_line(self):
         self.assertEqual(self._verify("x.py:1-3", ["def budget(lines)", r"/return \w+/"]), [])
 
+    def test_leading_whitespace_in_a_regex_match_holds_no_line(self):
+        # A match is placed by its visible characters. Otherwise "\s*" at the
+        # front of a pattern reaches back onto the blank line above the code,
+        # and that blank first line passes as holding evidence.
+        self._write("\ndef budget(lines):\n    wanted = 2 * lines\n    return wanted\n")
+        failures = self._verify("x.py:1-4", [r"/\s*def budget/", "return wanted"])
+        self.assertEqual([f.reason for f in failures], ["loose_range"])
+
+    def test_zero_width_regex_at_the_end_of_the_range_terminates(self):
+        # pattern.search(text, pos) treats a pos past the end as the end, so a
+        # loop over every match never finished on a zero-width match there.
+        # A child process turns a regression into a timeout, not a hung suite.
+        code = (
+            "from explainer.cite.verifier import match_evidence\n"
+            "print(match_evidence(['let a;'], ['/(?<=;)$/', r'/\\b/']).missing)\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=os.path.dirname(os.path.dirname(EXAMPLE)),
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        self.assertEqual(result.stdout.strip(), "[]", result.stderr)
+
     def test_a_line_inserted_above_the_cited_code_fails(self):
         # "wanted" is on lines 2 and 3, so after the shift every token is
         # still inside 1-3; only the empty first line gives the drift away.
@@ -245,6 +272,13 @@ class TightRangeTests(unittest.TestCase):
         self._write("import math\ndef budget(lines):\n    wanted = 2 * lines\n    return wanted\n")
         failures = self._verify("x.py:1-3", evidence)
         self.assertEqual([f.reason for f in failures], ["loose_range"])
+
+
+class MatchEvidenceTests(unittest.TestCase):
+    def test_every_match_counts_toward_the_span_overlapping_ones_too(self):
+        # "a a" occurs across lines 1-2 and, overlapping that, across lines
+        # 2-3; only the second reaches the last line.
+        self.assertEqual(match_evidence(["b a", "a", "a"], ["a a"]).span, (0, 2))
 
 
 class WholeWordTests(unittest.TestCase):
@@ -267,8 +301,12 @@ class WholeWordTests(unittest.TestCase):
         (["access = 0.5_f64.powf(days)"], "powf(", True),
         (['fail("dirty_tree", detail)'], '"dirty_tree"', True),
         (["if failures:", "    raise GateError(failures)"], "failures: raise GateError", True),
+        (["if failures:", "", "    raise GateError(f)"], "failures: raise GateError", True),
+        (["x = self.value"], "self.", True),
+        (["def f():", "    return x"], r"/(?m)^def f\(\):\n    return x$/", True),
         (["MAX_TOKENS = 24"], "/TOKENS/", True),
-        (["这是引用门的说明"], "引用门", True),
+        (["\u8fd9\u662f\u5f15\u7528\u95e8\u7684\u8bf4\u660e"], "\u5f15\u7528\u95e8", True),
+        (["\u8c03\u7528API\u63a5\u53e3"], "API", True),
     )
 
     def test_plain_tokens_match_whole_words(self):

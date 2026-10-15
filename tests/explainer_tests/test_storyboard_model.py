@@ -155,10 +155,10 @@ class LoadStoryboardTests(unittest.TestCase):
         self.assertEqual(beat.claims[0].cite, "a.rs:5")
         self.assertEqual(beat.claims[0].evidence, ("bar",))
 
-    # A cite with no evidence would sail through the citation gate: verifier's
-    # _missing_evidence iterates the evidence tuple, so an empty one can never
-    # report a miss. The gate would then print "every cited fact verified" over
-    # a claim that proves nothing -- the one failure the gate exists to prevent.
+    # A cite with no evidence proves nothing, yet the citation gate used to pass
+    # it: it looked for each listed token, so an empty list could never report a
+    # miss. The gate now fails it too (no_evidence), but the loader refuses it
+    # first, with a message that says why.
     # Diagram nodes/edges were already guarded; callouts and prose claims were not.
 
     def test_code_callout_cite_without_evidence_rejected(self):
