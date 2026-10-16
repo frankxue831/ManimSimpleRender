@@ -18,7 +18,12 @@ from explainer.cli import MAX_BEATS_LIMIT, MAX_REPAIRS_LIMIT, main
 from explainer.plan.client import ClientError, FakeClient, MaxTokensExhausted
 from explainer.plan.critique import MAX_REVISIONS_LIMIT
 from explainer.plan.emit import EmitError
-from tests.explainer_tests.support import confirm_write_is_blocked, git, make_git_repo
+from tests.explainer_tests.support import (
+    confirm_write_is_blocked,
+    evidence_reaching,
+    git,
+    make_git_repo,
+)
 
 SRC = "grounding_floor = 0.4\nmultiplier = 0.5\nfloor = max(a, grounding_floor)\n"
 
@@ -488,6 +493,61 @@ class PlanExitCodeTests(unittest.TestCase):
         self.assertIn("keeping the draft's expansion", err)
         self.assertNotIn("weak-comment-beat", content)
         self.assertIn("planned:", stdout)
+
+
+def _comment_beat():
+    """A beat citing line 4 of SRC + a comment line, which cannot back a claim."""
+    return {
+        "id": "weak-comment-beat",
+        "canvas_kind": "code",
+        "focus_index": 0,
+        "cite_start": 4,
+        "cite_end": 4,
+        "display": "# just a comment line",
+        "narration": "This beat cannot prove anything.",
+        "caption": "",
+        "caption_cite": None,
+        "regions": [],
+        "diagram": None,
+    }
+
+
+class CutLinesReportTests(unittest.TestCase):
+    """A cite trimmed past a line of code is reported once, with the dropped
+    beats, from the expansion that ships. evidence_reaching stands in for a
+    selection whose token budget ran out early."""
+
+    def _plan(self, client):
+        root = make_git_repo({"decay.py": SRC + "# just a comment line\n"})
+        with tempfile.TemporaryDirectory() as directory:
+            out = os.path.join(directory, "s.story.yaml")
+            with evidence_reaching(1):
+                code, _, err = _run(_argv(root, out), client)
+        self.assertEqual(code, 0, err)
+        return err
+
+    def _with_cut_and_weak_beat(self):
+        payload = _payload()
+        payload["beats"][0].update(cite_start=1, cite_end=2)
+        payload["beats"].append(_comment_beat())
+        return payload
+
+    def test_a_cut_and_a_dropped_beat_are_each_printed_once(self):
+        # The revision repeats the draft, so it ships after the draft is
+        # re-expanded to compare dropped beats: two expansions, one report.
+        payload = self._with_cut_and_weak_beat()
+        err = self._plan(FakeClient([payload, payload]))
+        self.assertEqual(err.count("dropped beat 'weak-comment-beat': "), 1, err)
+        self.assertEqual(err.count("dropped line 2 from a cite in beat 'floor': "), 1, err)
+        self.assertIn("decay.py:1-2 is written as decay.py:1", err)
+
+    def test_a_discarded_revisions_cut_is_not_printed(self):
+        # The revision loses a beat the draft kept, so the draft's expansion
+        # ships, and the revision's cut is not counted as a lost beat.
+        err = self._plan(FakeClient([_payload(), self._with_cut_and_weak_beat()]))
+        self.assertIn("the revision dropped 1 beat(s) where the draft dropped 0", err)
+        self.assertNotIn("dropped line", err)
+        self.assertNotIn("dropped beat", err)
 
 
 if __name__ == "__main__":

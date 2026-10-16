@@ -14,6 +14,10 @@ from explainer.plan.evidence import (
     MAX_TOKENS,
     WeakCiteError,
     _code_tokens,
+    _line_candidates,
+    _spread,
+    _token_budget,
+    content_lines,
     extract_evidence,
 )
 
@@ -125,6 +129,150 @@ LADDER = FocusTarget(
         ")"
     ),
     language="python",
+    kind="code",
+)
+
+# Twelve constants put two strong tokens on each of their lines, which fills
+# the 24-token budget, and the function under them holds only weak ones. The
+# reviewer's example on pull request 8: a cite of lines 1-20 was trimmed to
+# 1-12, cutting the whole function without a word.
+CONSTANTS_THEN_FUNCTION = FocusTarget(
+    path="limits.py",
+    start=1,
+    end=20,
+    text="\n".join(
+        [f"LIMIT_{i} = {i + 10}" for i in range(12)]
+        + [
+            "def scale(values, factor):",
+            "    running = []",
+            "    for value in values:",
+            "        running += [value * factor]",
+            "    total = sum(running)",
+            "    if total > factor:",
+            "        total = factor",
+            "    return round(total)",
+        ]
+    ),
+    language="python",
+    kind="code",
+)
+
+# More lines holding a strong token than the budget has slots, so even the
+# first pass of _spread, one token per line, ran out before the last lines.
+LONG_TABLE = FocusTarget(
+    path="table.py",
+    start=1,
+    end=30,
+    text="\n".join(f'value_{i} = "token_{i}"' for i in range(30)),
+    language="python",
+    kind="code",
+)
+
+LONG_NOTES = FocusTarget(
+    path="notes.md",
+    start=1,
+    end=30,
+    text="\n".join(f"Step {i} retries the upload with a longer backoff." for i in range(30)),
+    language="markdown",
+    kind="prose",
+)
+
+# Every line could fill the budget alone, and the first and last lines' own
+# strongest tokens are taken anyway: the case where nothing may change.
+DENSE = FocusTarget(
+    path="dense.py",
+    start=1,
+    end=3,
+    text=(
+        'route("alpha", "beta", "gamma", "delta")\n'
+        'route("one", "two", "three", "four")\n'
+        'route("red", "green", "blue", "cyan")'
+    ),
+    language="python",
+    kind="code",
+)
+
+# Code between a blank first line, a keyword-only line and a closing brace.
+FENCED = FocusTarget(
+    path="m.rs",
+    start=10,
+    end=14,
+    text="\nlet floor = f32::max(access_floor, grounding_floor);\n} else {\nlet m = 0.5;\n}",
+    language="rust",
+    kind="code",
+)
+
+# The first line holds only weak words, and the strong tokens of the twelve
+# constants under it fill the budget: the first line needs its own token too.
+HEADED_CONSTANTS = FocusTarget(
+    path="limits.py",
+    start=1,
+    end=13,
+    text="\n".join(
+        ["def limits(table, scale):"] + [f"    LIMIT_{i} = {i + 10}" for i in range(12)]
+    ),
+    language="python",
+    kind="code",
+)
+
+# The last line's one candidate, "value", is first seen on line 15, so only a
+# token drawn from the last line itself is sure to stand for it.
+ECHOED_FUNCTION = FocusTarget(
+    path="limits.py",
+    start=1,
+    end=20,
+    text=CONSTANTS_THEN_FUNCTION.text.replace("return round(total)", "return value"),
+    language="python",
+    kind="code",
+)
+
+# Prose drops a phrase it has seen in other letter case, so the last line here,
+# line 1 in lower case, has no phrase of its own in the whole-text ranking.
+ECHOED_NOTES = FocusTarget(
+    path="notes.md",
+    start=1,
+    end=30,
+    text="\n".join(
+        [f"Step {i} retries the upload with backoff." for i in range(29)]
+        + ["step 0 retries the upload with backoff."]
+    ),
+    language="markdown",
+    kind="prose",
+)
+
+# Filler on every line but line 24, the only strong phrase, which the first
+# pass of _spread reaches with no slot to spare.
+FILLER_ROWS = FocusTarget(
+    path="notes.md",
+    start=1,
+    end=30,
+    text="\n".join(f"It is {i} and it is {'retried' if i == 23 else 'all'}" for i in range(30)),
+    language="markdown",
+    kind="prose",
+)
+
+# The first line's two longest phrases are weak and its shortest is strong;
+# every other line holds one phrase, and the lines' phrases outnumber the
+# budget by two.
+PHRASED_FIRST_LINE = FocusTarget(
+    path="notes.md",
+    start=1,
+    end=24,
+    text="\n".join(
+        ["it is what it is and that is all but the retry"]
+        + [f"Step {i} retries the upload with backoff." for i in range(1, 24)]
+    ),
+    language="markdown",
+    kind="prose",
+)
+
+# "Ok" is too short to be a token, so line 3 is code that no evidence can reach.
+CHECK = FocusTarget(
+    path="check.rs",
+    start=1,
+    end=4,
+    text="fn check(&self) -> Result<(), Error> {\n    validate(&self.config)?;\n    Ok(())\n}",
+    language="rust",
     kind="code",
 )
 
@@ -459,6 +607,135 @@ class WeakStopwordFilterTests(unittest.TestCase):
         )
         with self.assertRaises(WeakCiteError):
             extract_evidence(target, 1, 1)
+
+
+def _cited_lines(target, lo, hi):
+    offset = lo - target.start
+    return target.text.split("\n")[offset : offset + (hi - lo) + 1]
+
+
+def _evidence_span(target, lo, hi):
+    """The 0-based ``(first, last)`` cited lines the real gate finds evidence on."""
+    return match_evidence(_cited_lines(target, lo, hi), extract_evidence(target, lo, hi)).span
+
+
+def _candidate_lines(target, lo, hi):
+    """The 0-based cited lines that hold a token candidate."""
+    lines = _cited_lines(target, lo, hi)
+    return [index for index, line in enumerate(lines) if _line_candidates(line, target.kind)]
+
+
+class EdgeLineTests(unittest.TestCase):
+    """Evidence reaches the first and last cited lines that hold a candidate.
+
+    expand.py trims every cite it writes to the lines its evidence reaches,
+    because the gate fails a cite whose first or last line holds none. When
+    the budget ran out before the last lines of a long cite, that trim cut
+    real code, and the on-screen label covered less than the display showed.
+    """
+
+    def test_the_last_line_keeps_evidence_after_the_budget_runs_out(self):
+        self.assertEqual(_evidence_span(CONSTANTS_THEN_FUNCTION, 1, 20), (0, 19))
+
+    def test_the_first_line_keeps_evidence_too(self):
+        self.assertEqual(_evidence_span(HEADED_CONSTANTS, 1, 13), (0, 12))
+
+    def test_a_cite_longer_than_the_budget_keeps_evidence_on_its_last_line(self):
+        for target in (LONG_TABLE, LONG_NOTES):
+            with self.subTest(path=target.path):
+                self.assertEqual(_evidence_span(target, 1, 30), (0, 29))
+
+    def test_an_edge_line_whose_candidates_all_appear_earlier_keeps_evidence(self):
+        # The whole-text candidates name each token once, at the line where it
+        # first appears, so an edge token must come from the edge line itself.
+        for target in (ECHOED_FUNCTION, ECHOED_NOTES):
+            with self.subTest(path=target.path):
+                last = len(target.text.split("\n")) - 1
+                self.assertEqual(_evidence_span(target, 1, last + 1), (0, last))
+
+    def test_the_trim_never_cuts_a_line_holding_a_candidate(self):
+        # Evidence spans every line that holds a token candidate, so the trim
+        # to it cuts only lines no token can be drawn from.
+        for target, lo, hi in (
+            (CONSTANTS_THEN_FUNCTION, 1, 20),
+            (CONSTANTS_THEN_FUNCTION, 5, 17),
+            (HEADED_CONSTANTS, 1, 13),
+            (ECHOED_FUNCTION, 1, 20),
+            (ECHOED_NOTES, 1, 30),
+            (FILLER_ROWS, 1, 30),
+            (LONG_TABLE, 1, 30),
+            (LONG_NOTES, 3, 30),
+            (DENSE, 1, 3),
+            (FENCED, 10, 14),
+            (CHECK, 1, 4),
+            (RUST, 90, 94),
+            (LADDER, 11, 17),
+            (MIXED, 1, 2),
+        ):
+            with self.subTest(path=target.path, lo=lo, hi=hi):
+                first, last = _evidence_span(target, lo, hi)
+                bearing = _candidate_lines(target, lo, hi)
+                self.assertLessEqual(first, bearing[0])
+                self.assertGreaterEqual(last, bearing[-1])
+
+    def test_lines_that_cannot_hold_evidence_are_left_for_the_trim(self):
+        # A blank line, "} else {" and a closing brace hold nothing to cite.
+        self.assertEqual(content_lines(FENCED, 10, 14), (11, 13))
+        self.assertEqual(_evidence_span(FENCED, 10, 14), (1, 3))
+
+    def test_a_code_fence_is_markup_not_content(self):
+        # A fence delimits the content, as a brace does in code, even when it
+        # names a language.
+        target = FocusTarget(
+            path="README.md",
+            start=1,
+            end=4,
+            text="```bash\ngit clone the repository first\n~~~\n```",
+            language="markdown",
+            kind="prose",
+        )
+        self.assertEqual(content_lines(target, 1, 4), (2,))
+
+    def test_code_without_a_candidate_is_still_content(self):
+        # No token can be drawn from Ok(()), so the trim cuts it, but it is code
+        # the display shows, and expand.py reports cutting it.
+        self.assertEqual(_candidate_lines(CHECK, 1, 4), [0, 1])
+        self.assertEqual(content_lines(CHECK, 1, 4), (1, 2, 3))
+
+    def test_a_weak_edge_does_not_push_out_the_only_strong_phrase(self):
+        # Prose is spread for coverage, not strength. Here the weak first and
+        # last lines took the two slots that reached line 24, the only strong
+        # phrase, and the cite would have been dropped as weak.
+        tokens = extract_evidence(FILLER_ROWS, 1, 30)
+        self.assertIn("It is 23 and it is retried", tokens)
+        self.assertEqual(_evidence_span(FILLER_ROWS, 1, 30), (0, 29))
+
+    def test_an_edge_line_spends_one_slot(self):
+        # An edge takes the token _spread would give its line first, not a
+        # second one beside it, so the budget still reaches every line here.
+        lines = PHRASED_FIRST_LINE.text.split("\n")
+        tokens = extract_evidence(PHRASED_FIRST_LINE, 1, 24)
+        covered = [i for i, line in enumerate(lines) if any(token in line for token in tokens)]
+        self.assertEqual(covered, list(range(24)))
+
+    def test_strong_tokens_still_fill_the_rest_of_the_budget(self):
+        # Only the edge lines take a token out of turn: "round" holds the last
+        # line. Every other slot still goes to a strong token while one is
+        # left, so the function's other weak identifiers stay out.
+        tokens = extract_evidence(CONSTANTS_THEN_FUNCTION, 1, 20)
+        self.assertEqual(len(tokens), MAX_TOKENS)
+        self.assertIn("round", tokens)
+        for weak in ("scale", "values", "factor", "running", "value", "total"):
+            self.assertNotIn(weak, tokens)
+
+    def test_a_selection_that_already_holds_both_edge_tokens_is_unchanged(self):
+        # Taking the edge tokens first must not reshuffle the rest of the
+        # spread: dropping them from it and spreading the remainder afresh
+        # would trade a token here for another the old selection never chose.
+        lines = _cited_lines(DENSE, 1, 3)
+        strong, _weak = _code_tokens("\n".join(lines))
+        before = _spread(strong, _token_budget(len(lines)))
+        self.assertEqual(sorted(extract_evidence(DENSE, 1, 3)), sorted(before))
 
 
 if __name__ == "__main__":

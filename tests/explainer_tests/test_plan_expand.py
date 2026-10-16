@@ -11,10 +11,11 @@ import unittest
 
 import yaml
 
-from explainer.plan.expand import DroppedBeat, ExpandError, expand
+from explainer.plan.expand import DroppedBeat, DroppedLines, ExpandError, expand
 from explainer.plan.facts import FactSheet, FocusTarget
 from explainer.plan.plan_ir import parse
 from explainer.storyboard.model import load_storyboard
+from tests.explainer_tests.support import evidence_reaching
 
 TARGET = FocusTarget(
     path="decay.rs",
@@ -244,6 +245,111 @@ class ExpandTests(unittest.TestCase):
             storyboard = load_storyboard(path)
         self.assertEqual(len(storyboard.beats), 2)
         self.assertEqual(storyboard.beats[0].canvas.kind, "diagram")
+
+
+CHECK = FocusTarget(
+    path="check.rs",
+    start=1,
+    end=4,
+    text="fn check(&self) -> Result<(), Error> {\n    validate(&self.config)?;\n    Ok(())\n}",
+    language="rust",
+    kind="code",
+)
+
+
+class CutLinesReportTests(unittest.TestCase):
+    """A trim that cuts a line of code or text is reported, not silent.
+
+    The cite is still trimmed, since the gate fails an edge line without
+    evidence, but its label then covers less than the display shows. The
+    report goes out with the dropped beats, the channel the CLI already
+    prints. evidence_reaching stands in for a selection whose budget ran out.
+    """
+
+    def _cuts(self, dropped):
+        return [(d.beat_id, d.cite, d.kept, d.lines) for d in dropped]
+
+    def test_a_cut_code_line_is_reported_with_the_dropped_beats(self):
+        beat = _code_beat(id="long", cite_start=90, cite_end=91)
+        with evidence_reaching(1):
+            doc, dropped = _expanded([beat, _code_beat(id="companion")])
+        self.assertEqual(doc["beats"][0]["code_callout"]["cite"], "decay.rs:90")
+        self.assertEqual(self._cuts(dropped), [("long", "decay.rs:90-91", "decay.rs:90", (91,))])
+
+    def test_a_cut_at_the_top_of_a_cite_is_reported(self):
+        beat = _code_beat(id="long", cite_start=90, cite_end=91)
+        with evidence_reaching(1, from_end=True):
+            doc, dropped = _expanded([beat, _code_beat(id="companion")])
+        self.assertEqual(doc["beats"][0]["code_callout"]["cite"], "decay.rs:91")
+        self.assertEqual(self._cuts(dropped), [("long", "decay.rs:90-91", "decay.rs:91", (90,))])
+
+    def test_a_cut_line_of_code_without_a_candidate_is_reported(self):
+        # No selection can reach Ok(()): "Ok" is too short to be a token. The
+        # trim cuts it with the closing brace, and only line 3 holds code.
+        sheet = FactSheet(
+            repo_root="/tmp/some/repo",
+            commit="abc1234",
+            dirty=False,
+            topic="t",
+            targets=(TARGET, CHECK),
+            beat_budget=2,
+        )
+        beat = _code_beat(id="check", focus_index=1, cite_start=1, cite_end=4)
+        plan = parse({"title": "T", "subtitle": "S", "beats": [beat, _code_beat()]}, sheet)
+        doc, dropped = expand(plan, sheet, "/tmp/out")
+        self.assertEqual(doc["beats"][0]["code_callout"]["cite"], "check.rs:1-2")
+        self.assertEqual(self._cuts(dropped), [("check", "check.rs:1-4", "check.rs:1-2", (3,))])
+
+    def test_the_report_names_runs_of_cut_lines(self):
+        self.assertEqual(
+            str(DroppedLines("b", "x.py:1-7", "x.py:1-2", (3, 4, 5, 7))),
+            "dropped lines 3-5, 7 from a cite in beat 'b': no evidence token reaches "
+            "them, so x.py:1-7 is written as x.py:1-2",
+        )
+
+    def test_a_claims_cut_is_reported_after_its_callouts(self):
+        # The claim's cut names line 92 alone: line 93 is a closing brace, and
+        # cutting a line that cannot hold evidence costs nothing.
+        beat = _code_beat(
+            id="long",
+            cite_start=90,
+            cite_end=91,
+            caption="the multiplier is 0.5",
+            caption_cite={"focus_index": 0, "start": 91, "end": 93},
+        )
+        with evidence_reaching(1):
+            doc, dropped = _expanded([beat, _code_beat(id="companion")])
+        self.assertEqual(doc["beats"][0]["claims"][0]["cite"], "decay.rs:91")
+        self.assertEqual(
+            self._cuts(dropped),
+            [
+                ("long", "decay.rs:90-91", "decay.rs:90", (91,)),
+                ("long", "decay.rs:91-93", "decay.rs:91", (92,)),
+            ],
+        )
+
+    def test_cutting_only_a_line_that_cannot_hold_evidence_is_not_reported(self):
+        # "grounding_floor" is on lines 90 and 92, so the evidence still
+        # reaches 92 and the trim cuts only the closing brace on 93.
+        beat = _code_beat(id="long", cite_start=90, cite_end=93)
+        with evidence_reaching(1):
+            doc, dropped = _expanded([beat, _code_beat(id="companion")])
+        self.assertEqual(doc["beats"][0]["code_callout"]["cite"], "decay.rs:90-92")
+        self.assertEqual(dropped, ())
+
+    def test_a_dropped_beat_reports_only_its_drop(self):
+        # The callout's cut is moot once the weak caption cite drops the beat.
+        gone = _code_beat(
+            id="gone",
+            cite_start=90,
+            cite_end=91,
+            caption="just a closing brace",
+            caption_cite={"focus_index": 0, "start": 93, "end": 93},
+        )
+        with evidence_reaching(1):
+            _, dropped = _expanded([gone, _code_beat(), _code_beat(id="companion")])
+        self.assertEqual([type(d) for d in dropped], [DroppedBeat])
+        self.assertEqual(dropped[0].beat_id, "gone")
 
 
 if __name__ == "__main__":

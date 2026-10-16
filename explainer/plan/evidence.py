@@ -289,26 +289,102 @@ def _is_strong_phrase(phrase):
     return False
 
 
+def _line_candidates(line, kind):
+    """The ``(token, strong)`` evidence candidates on one cited *line*, in the
+    order _spread takes a line's tokens: strong before weak for code, longest
+    first for prose."""
+    if kind == "prose":
+        return [(phrase, _is_strong_phrase(phrase)) for _index, phrase in _prose_phrases(line)]
+    strong, weak = _code_tokens(line)
+    return [(token, True) for _index, token in strong] + [(token, False) for _index, token in weak]
+
+
+_WORD = re.compile(r"\w+")
+
+
+def _holds_content(line, kind):
+    words = _WORD.findall(line)
+    if kind == "prose":
+        return bool(words) and not line.lstrip().startswith(("```", "~~~"))
+    return any(word.lower() not in _KEYWORDS for word in words)
+
+
+def content_lines(target, start, end):
+    """The lines of ``start``..``end`` (1-based) holding something a token could prove.
+
+    That is any word that, in code, is not a keyword. The other lines -- blank,
+    a lone brace or other punctuation, keywords only, and in prose a code
+    fence -- hold nothing to cite. A content line need not hold a token
+    candidate: no token is drawn from a word as short as the "Ok" of Rust's
+    ``Ok(())``, so trimming can cut it.
+    """
+    text = _cited_text(target, start, end)
+    return tuple(
+        start + index
+        for index, line in enumerate(text.split("\n"))
+        if _holds_content(line, target.kind)
+    )
+
+
+def _edge_candidates(lines, kind):
+    """The first ``(token, strong)`` candidate on the first and on the last of
+    *lines* that hold one: a single pair when one token serves both, as when
+    they are the same line, and none when no line holds a candidate.
+
+    Each is the token _spread takes first for its line, so an edge spends one
+    slot like any other line. It is drawn from its own line alone, so the gate
+    finds it there even when the same text was first seen on an earlier line.
+    """
+    bearing = [found for found in (_line_candidates(line, kind) for line in lines) if found]
+    if not bearing:
+        return []
+    first, last = bearing[0][0], bearing[-1][0]
+    return [first] if first[0] == last[0] else [first, last]
+
+
 def extract_evidence(target, start, end):
     """Evidence tokens for ``target``'s lines ``start``..``end`` (1-based, inclusive).
 
-    Raises :class:`WeakCiteError` when the range cannot yield at least
-    ``MIN_TOKENS`` tokens including one strong one -- a cite that cannot prove
+    The first candidate of the first and of the last line that holds one --
+    its strongest token, or for prose its longest phrase -- is chosen before
+    the budget is spread. expand.py trims each cite to the lines its evidence
+    reaches, so without these two a long cite whose budget ran out early lost
+    its last lines of code to the trim. With them, the trim cuts only lines
+    that hold no candidate, and expand.py reports those that still hold code
+    (content_lines). Every other slot is filled in the order _spread gives,
+    strong tokens first, as before.
+
+    Raises :class:`WeakCiteError` when the range holds fewer than
+    ``MIN_TOKENS`` candidates, or no strong one -- a cite that cannot prove
     something is dropped rather than shipped with a weak badge.
     """
     text = _cited_text(target, start, end)
-    budget = _token_budget(len(text.split("\n")))
+    lines = text.split("\n")
+    edges = _edge_candidates(lines, target.kind)
     if target.kind == "prose":
-        chosen = _spread(_prose_phrases(text), budget)
-        strong_count = len([p for p in chosen if _is_strong_phrase(p)])
+        phrases = _prose_phrases(text)
+        ranked = [(p, _is_strong_phrase(p)) for p in _spread(phrases, len(phrases))]
     else:
         strong, weak = _code_tokens(text)
         # Strong first, weak only to fill what strong could not: _spread
         # balances coverage WITHIN a strength tier, never across them.
-        chosen = _spread(strong, budget)
-        strong_count = len(chosen)
-        if len(chosen) < budget:
-            chosen = chosen + _spread(weak, budget - len(chosen))
+        ranked = [(token, True) for token in _spread(strong, len(strong))]
+        ranked += [(token, False) for token in _spread(weak, len(weak))]
+    # The edge tokens leave the ranking rather than re-spreading what is left
+    # of it, so when the old selection already held them nothing else changes.
+    taken = {token for token, _strong in edges}
+    rest = [entry for entry in ranked if entry[0] not in taken]
+    room = _token_budget(len(lines)) - len(edges)
+    kept = rest[:room]
+    late_strong = next((entry for entry in rest[room:] if entry[1]), None)
+    if late_strong and not any(strong for _token, strong in edges + kept):
+        # Prose is spread for coverage, not strength, so weak phrases can push
+        # the only strong one past the budget; it takes the last slot back.
+        # Code ranks every strong token first and never gets here.
+        kept = kept[:-1] + [late_strong]
+    picked = edges[:1] + kept + edges[1:]
+    chosen = [token for token, _strong in picked]
+    strong_count = len([token for token, strong in picked if strong])
     if len(chosen) < MIN_TOKENS or strong_count < 1:
         raise WeakCiteError(
             f"cite {target.path}:{start}-{end} yields only {len(chosen)} usable "
