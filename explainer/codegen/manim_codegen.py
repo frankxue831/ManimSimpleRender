@@ -171,12 +171,26 @@ def _is_finite(value):
         return False
 
 
+def _text_number_hint(value):
+    """A hint for a bound that YAML read as text although it spells a number.
+
+    PyYAML (YAML 1.1) reads ``1e6`` and ``1.0e6`` as strings; only ``1.0e+6`` is a float.
+    """
+    if not isinstance(value, str):
+        return ""
+    try:
+        float(value)
+    except ValueError:
+        return ""
+    return " (YAML read it as text: drop any quotes, and write an exponent as 1.0e+6)"
+
+
 def _plot_axis(spec, axis, default_max, beat_id):
     """The ``x``/``y`` mapping of a plot spec and its ``(min, max)``, checked.
 
     The bounds are written into the scene as Python literals, so each must be a real
     finite number (a YAML date or ``.nan`` would emit code that fails only in manim),
-    and min < max so the tick step is positive.
+    and min < max (as floats, which is how manim plots them) so the tick step is positive.
     """
     data = spec.get(axis)
     if data is None:  # absent or null: the default axis
@@ -192,12 +206,13 @@ def _plot_axis(spec, axis, default_max, beat_id):
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise CodegenError(
                 f"beat {beat_id!r}: plot {axis}.{key} must be a number, got {value!r}"
+                + _text_number_hint(value)
             )
         if not _is_finite(value):
             raise CodegenError(f"beat {beat_id!r}: plot {axis}.{key} must be finite, got {value!r}")
         bounds.append(value)
     lo, hi = bounds
-    if not lo < hi:
+    if not float(lo) < float(hi):  # 10**20 and 10**20 + 1 are one float
         raise CodegenError(
             f"beat {beat_id!r}: plot {axis}.min ({lo!r}) must be less than {axis}.max ({hi!r})"
         )

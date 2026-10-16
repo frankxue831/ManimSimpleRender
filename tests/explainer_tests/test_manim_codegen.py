@@ -551,6 +551,17 @@ class CodegenTests(unittest.TestCase):
                             rf"^beat 'b': plot {axis}\.{key} must be a number, got ",
                         )
 
+    def test_axis_bound_yaml_read_as_text_gets_a_hint(self):
+        # PyYAML reads an unquoted 1e6 as the string '1e6'; say so, not just "got '1e6'".
+        self._assert_rejected(
+            {"x": {"max": "1e6"}},
+            r"^beat 'b': plot x\.max must be a number, got '1e6' \(YAML read it as text: "
+            r"drop any quotes, and write an exponent as 1\.0e\+6\)$",
+        )
+        with self.assertRaises(CodegenError) as caught:
+            generate_scene(self._plot_beat(spec={"x": {"max": "ten"}}))
+        self.assertNotIn("YAML read it as text", str(caught.exception))
+
     def test_axis_bound_that_is_not_finite_raises(self):
         # nan/inf passed and wrote a bare nan/inf into the scene: a NameError in manim.
         # An int too large for a float overflowed at (max - min) / 4.
@@ -566,7 +577,13 @@ class CodegenTests(unittest.TestCase):
 
     def test_axis_min_must_be_below_max(self):
         for axis in ("x", "y"):
-            for bounds in ({"min": 5, "max": 5}, {"min": 10, "max": 0}, {"max": -5}):
+            for bounds in (
+                {"min": 5, "max": 5},
+                {"min": 10, "max": 0},
+                {"max": -5},
+                # Distinct ints, one float: manim's Axes divided by a zero span.
+                {"min": 10**20, "max": 10**20 + 1},
+            ):
                 with self.subTest(axis=axis, bounds=bounds):
                     self._assert_rejected(
                         {axis: bounds}, rf"^beat 'b': plot {axis}\.min .* less than {axis}\.max"
