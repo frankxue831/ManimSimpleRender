@@ -23,7 +23,8 @@ explainer verify examples/evidence-budget.story.yaml
 explainer render examples/evidence-budget.story.yaml -o out.mp4
 ```
 
-`verify` only reads files and needs no network. `render` additionally needs:
+`verify` runs the citation gate, then checks that the code generator accepts the storyboard; it
+only reads files, does not render or call TTS, and needs no network. `render` additionally needs:
 
 - **Manim's system prerequisites** (ffmpeg, LaTeX, cairo/pango), which `pip` does not install;
   see [Requirements](#requirements).
@@ -50,7 +51,8 @@ the `explainer` command (equivalent: `python -m explainer.cli`). It shares the Q
 core with the GUI; see `docs/adr/0001-render-core-boundary.md` for that boundary.
 
 ```bash
-# Check a storyboard's citations against the source repo it cites
+# Check a storyboard's citations against the source repo it cites, then generate its
+# Manim scene code (no render, no TTS)
 explainer verify examples/evidence-budget.story.yaml
 
 # Generate, verify, and render a storyboard to an mp4

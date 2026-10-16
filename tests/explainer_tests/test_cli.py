@@ -1,8 +1,10 @@
 """Tests for explainer.cli exit codes -- the contract callers/CI depend on.
 
-Exit codes: 0 ok, 2 schema/validation error, 3 citation miss, 4 render failure.
-The 0/2/3 paths are reachable WITHOUT a real manim (verify only reads source), so
-they get a regression guard here; the verifier is faked to keep them deterministic.
+Exit codes: 0 ok, 2 schema/validation error (including a storyboard that codegen
+rejects), 3 citation miss, 4 render failure. The 0/2/3 paths are
+reachable WITHOUT a real manim (verify only reads source and runs pure codegen), so
+they get a regression guard here; the verifier is faked wherever a storyboard cites
+real code, to keep them deterministic.
 """
 
 import io
@@ -56,6 +58,102 @@ class CliExitCodeTests(unittest.TestCase):
         with open(path, "w", encoding="utf-8") as handle:
             handle.write("version: 99\nmeta: {title: t}\nbeats: []\n")
         self.assertEqual(_run(["verify", path]), 2)
+
+
+# A storyboard that loads and has nothing to cite (so the real gate passes)
+# but cannot become a Manim scene: codegen rejects one part of the plot spec.
+_REJECTED_BY_CODEGEN = """\
+version: 1
+meta:
+  title: "Bad plot"
+  source:
+    repo_root: "."
+beats:
+  - id: b1
+    canvas:
+      kind: plot
+      spec:
+{spec}
+    narration: "A curve."
+"""
+_BAD_FN = """\
+        curves:
+          - fn: "__import__('os').system('echo pwned')"
+"""
+_BAD_ANNOTATION = """\
+        curves:
+          - fn: "x"
+        annotations:
+          - kind: vline
+            y: 1
+"""
+
+
+def _run_capturing(argv):
+    """Invoke the CLI; return ``(exit code, stdout, stderr)``."""
+    out, err = io.StringIO(), io.StringIO()
+    with redirect_stdout(out), redirect_stderr(err):
+        code = main(argv)
+    return code, out.getvalue(), err.getvalue()
+
+
+class CliCodegenErrorTests(unittest.TestCase):
+    """A storyboard that passes the gate but that codegen rejects is a
+    validation error (exit 2, one `error:` line), reported by verify, which
+    needs no manim, and by render without a traceback."""
+
+    CASES = (
+        ("curve fn", _BAD_FN, "error: unsafe/invalid curve fn"),
+        ("annotation kind", _BAD_ANNOTATION, "error: unsupported annotation kind 'vline'"),
+    )
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix="explainer_cli_")
+        self.addCleanup(temp.cleanup)
+        self.dir = temp.name
+
+    def _storyboard(self, spec):
+        path = os.path.join(self.dir, "bad.story.yaml")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(_REJECTED_BY_CODEGEN.format(spec=spec.rstrip("\n")))
+        return path
+
+    def test_verify_returns_2_when_codegen_rejects_the_storyboard(self):
+        for name, spec, message in self.CASES:
+            with self.subTest(name):
+                code, out, err = _run_capturing(["verify", self._storyboard(spec)])
+                self.assertEqual(code, 2)
+                self.assertIn(message, err)
+                self.assertNotIn("Traceback", err)
+                self.assertIn("citation gate OK", out)  # the gate itself passed
+                self.assertNotIn("scene: OK", out)
+
+    def test_render_returns_2_before_any_render_runs(self):
+        for name, spec, message in self.CASES:
+            with self.subTest(name):
+                with patch("explainer.render.adapter.RenderRunner") as runner:
+                    code, _, err = _run_capturing(
+                        ["render", self._storyboard(spec), "-o", os.path.join(self.dir, "out.mp4")]
+                    )
+                self.assertEqual(code, 2)
+                self.assertIn(message, err)
+                self.assertNotIn("Traceback", err)
+                runner.assert_not_called()
+
+    def test_verify_reports_a_gate_failure_first_and_skips_codegen(self):
+        failures = [CiteFailure("b1", "x.py:1", ("x",))]
+        with patch("explainer.cli.verify_storyboard", return_value=failures):
+            code, _, err = _run_capturing(["verify", self._storyboard(_BAD_ANNOTATION)])
+        self.assertEqual(code, 3)
+        self.assertIn("citation gate FAILED", err)
+        self.assertNotIn("annotation", err)
+
+    def test_verify_ok_says_the_scene_code_was_generated(self):
+        with patch("explainer.cli.verify_storyboard", return_value=[]):
+            code, out, err = _run_capturing(["verify", EXAMPLE])
+        self.assertEqual(code, 0)
+        self.assertIn("scene: OK (Manim scene code generated for 3 beat(s))", out)
+        self.assertEqual(err, "")
 
 
 class QualityFlagNormalizationTests(unittest.TestCase):
