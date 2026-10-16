@@ -1,20 +1,21 @@
 """Tests for explainer.cite.verifier -- the evidence-based citation gate.
 
 The differentiator: every on-screen code fact cites real source lines and lists
-evidence tokens that MUST be present there. A wrong constant or renamed symbol
-fails the gate. Positive + negative cases are hermetic (temp source files); the
-shipped example storyboard is verified against this repository's own
-explainer/plan/evidence.py, so moving those lines means updating its cites.
+evidence tokens that MUST be present there, as whole words, with evidence on the
+first and last cited lines. Positive + negative cases are hermetic (temp source
+files); the shipped example storyboard is verified against this repository's
+own explainer/plan/evidence.py, so moving those lines means updating its cites.
 """
 
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
 
-from explainer.cite.verifier import verify_storyboard
+from explainer.cite.verifier import match_evidence, verify_storyboard
 from explainer.storyboard.model import (
     Beat,
     Canvas,
@@ -98,6 +99,36 @@ class VerifierTests(unittest.TestCase):
         self.assertEqual(len(failures), 1)
         self.assertIn("/[/", failures[0].missing)
 
+    def test_regex_the_engine_cannot_compile_fails_instead_of_raising(self):
+        # ARCH-12 beyond re.error: Python raises OverflowError for a repeat
+        # count it cannot store, RecursionError for deeply nested groups and
+        # ValueError for incompatible inline flags.
+        for token in ("/a{99999999999}/", "/" + "(" * 1000 + ")" * 1000 + "/", "/(?a)(?u)x/"):
+            with self.subTest(token=token[:16]):
+                sb = _storyboard(self._callout("x.rs:2", [token]), repo_root=self.dir)
+                failures = verify_storyboard(sb)  # must not raise
+                self.assertEqual(len(failures), 1)
+                self.assertIn(token, failures[0].missing)
+
+    def test_cite_with_no_evidence_fails(self):
+        # The loader refuses a cite without evidence; a storyboard built in
+        # code must not get a verified badge for proving nothing either.
+        sb = _storyboard(self._callout("x.rs:2", []), repo_root=self.dir)
+        failures = verify_storyboard(sb)
+        self.assertEqual([f.reason for f in failures], ["no_evidence"])
+
+    def test_token_that_matches_any_text_is_missing(self):
+        # The loader refuses these; the gate must not rely on it, because
+        # storyboards are also built in code (the planner, these tests).
+        for token in ("", "   ", "//", "/a*/"):
+            with self.subTest(token=token):
+                sb = _storyboard(
+                    self._callout("x.rs:2", ["grounding_floor", token]), repo_root=self.dir
+                )
+                failures = verify_storyboard(sb)
+                self.assertEqual(len(failures), 1)
+                self.assertEqual(failures[0].missing, (token,))
+
     def test_whitespace_is_normalized_before_match(self):
         with open(self.src, "w", encoding="utf-8") as handle:
             handle.write("let floor = f32::max(access_floor,   grounding_floor);\n")
@@ -152,6 +183,146 @@ class ExampleStoryboardTests(unittest.TestCase):
         failures = verify_storyboard(bad)
         self.assertEqual(len(failures), 1)
         self.assertIn("max(BASE_TOKENS, 3 * line_count)", failures[0].missing)
+
+    def test_a_constant_that_gains_a_digit_would_fail(self):
+        # The per-line beat cites TOKENS_PER_LINE = 2 with the evidence "2".
+        # While plain tokens matched as substrings, changing the constant to 24
+        # left the gate green, because "2" is inside "24".
+        repo = os.path.dirname(os.path.dirname(EXAMPLE))
+        cited = os.path.join("explainer", "plan", "evidence.py")
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root)
+        with open(os.path.join(repo, cited), encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertIn("TOKENS_PER_LINE = 2\n", source)
+        os.makedirs(os.path.dirname(os.path.join(root, cited)))
+        with open(os.path.join(root, cited), "w", encoding="utf-8") as handle:
+            handle.write(source.replace("TOKENS_PER_LINE = 2\n", "TOKENS_PER_LINE = 24\n"))
+        failures = verify_storyboard(load_storyboard(EXAMPLE), repo_root=root)
+        self.assertEqual([(f.beat_id, f.missing) for f in failures], [("per-line", ("2",))])
+
+
+class TightRangeTests(unittest.TestCase):
+    """The first and last cited lines must each hold evidence.
+
+    Without that, a cited range can drift: insert a line above the cited
+    code and every token can still sit inside the old range, so the gate
+    stays green while the on-screen file:start-end label is one line off.
+    """
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root)
+        self._write("def budget(lines):\n    wanted = 2 * lines\n    return wanted\n")
+
+    def _write(self, text):
+        with open(os.path.join(self.root, "x.py"), "w", encoding="utf-8") as handle:
+            handle.write(text)
+
+    def _verify(self, cite, evidence):
+        callout = CodeCallout(display="x", language="python", cite=cite, evidence=tuple(evidence))
+        return verify_storyboard(_storyboard(callout, repo_root=self.root))
+
+    def test_evidence_on_both_edge_lines_passes(self):
+        self.assertEqual(self._verify("x.py:1-3", ["def budget(lines)", "return wanted"]), [])
+
+    def test_edge_line_without_evidence_fails_and_names_the_tight_cite(self):
+        for cite, evidence, tight in (
+            ("x.py:1-3", ["wanted = 2 * lines", "return wanted"], "x.py:2-3"),
+            ("x.py:1-3", ["def budget(lines)", "wanted = 2 * lines"], "x.py:1-2"),
+        ):
+            with self.subTest(evidence=evidence):
+                failures = self._verify(cite, evidence)
+                self.assertEqual([f.reason for f in failures], ["loose_range"])
+                self.assertIn(tight, str(failures[0]))
+
+    def test_regex_evidence_can_hold_an_edge_line(self):
+        self.assertEqual(self._verify("x.py:1-3", ["def budget(lines)", r"/return \w+/"]), [])
+
+    def test_leading_whitespace_in_a_regex_match_holds_no_line(self):
+        # A match is placed by its visible characters. Otherwise "\s*" at the
+        # front of a pattern reaches back onto the blank line above the code,
+        # and that blank first line passes as holding evidence.
+        self._write("\ndef budget(lines):\n    wanted = 2 * lines\n    return wanted\n")
+        failures = self._verify("x.py:1-4", [r"/\s*def budget/", "return wanted"])
+        self.assertEqual([f.reason for f in failures], ["loose_range"])
+
+    def test_zero_width_regex_at_the_end_of_the_range_terminates(self):
+        # pattern.search(text, pos) treats a pos past the end as the end, so a
+        # loop over every match never finished on a zero-width match there.
+        # A child process turns a regression into a timeout, not a hung suite.
+        code = (
+            "from explainer.cite.verifier import match_evidence\n"
+            "print(match_evidence(['let a;'], ['/(?<=;)$/', r'/\\b/']).missing)\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=os.path.dirname(os.path.dirname(EXAMPLE)),
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        self.assertEqual(result.stdout.strip(), "[]", result.stderr)
+
+    def test_a_line_inserted_above_the_cited_code_fails(self):
+        # "wanted" is on lines 2 and 3, so after the shift every token is
+        # still inside 1-3; only the empty first line gives the drift away.
+        evidence = ["def budget(lines)", "wanted"]
+        self.assertEqual(self._verify("x.py:1-3", evidence), [])
+        self._write("import math\ndef budget(lines):\n    wanted = 2 * lines\n    return wanted\n")
+        failures = self._verify("x.py:1-3", evidence)
+        self.assertEqual([f.reason for f in failures], ["loose_range"])
+
+
+class MatchEvidenceTests(unittest.TestCase):
+    def test_every_match_counts_toward_the_span_overlapping_ones_too(self):
+        # "a a" occurs across lines 1-2 and, overlapping that, across lines
+        # 2-3; only the second reaches the last line.
+        self.assertEqual(match_evidence(["b a", "a", "a"], ["a a"]).span, (0, 2))
+
+
+class WholeWordTests(unittest.TestCase):
+    """A plain token is found only as whole words, never inside a longer word.
+
+    Word characters are ASCII letters, digits and underscore. Text in other
+    scripts keeps substring matching, since CJK has no spaces between words.
+    """
+
+    CASES = (
+        # (cited lines, token, found)
+        (["TOKENS_PER_LINE = 24"], "2", False),
+        (["TOKENS_PER_LINE = 2"], "2", True),
+        (["width = 24; height = 2"], "2", True),
+        (["MAX_TOKENS = 24"], "TOKENS", False),
+        (["let grounding_floor_v2 = 0.4;"], "grounding_floor", False),
+        (["self.grounding_floor = x"], "grounding_floor", True),
+        (["access = 0.5_f64.powf(days)"], "0.5", False),
+        (["access = 0.5_f64.powf(days)"], "0.5_f64", True),
+        (["access = 0.5_f64.powf(days)"], "powf(", True),
+        (['fail("dirty_tree", detail)'], '"dirty_tree"', True),
+        (["if failures:", "    raise GateError(failures)"], "failures: raise GateError", True),
+        (["if failures:", "", "    raise GateError(f)"], "failures: raise GateError", True),
+        (["x = self.value"], "self.", True),
+        (["def f():", "    return x"], r"/(?m)^def f\(\):\n    return x$/", True),
+        (["MAX_TOKENS = 24"], "/TOKENS/", True),
+        (["\u8fd9\u662f\u5f15\u7528\u95e8\u7684\u8bf4\u660e"], "\u5f15\u7528\u95e8", True),
+        (["\u8c03\u7528API\u63a5\u53e3"], "API", True),
+    )
+
+    def test_plain_tokens_match_whole_words(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root)
+        for lines, token, found in self.CASES:
+            with self.subTest(lines=lines, token=token):
+                with open(os.path.join(root, "x.py"), "w", encoding="utf-8") as handle:
+                    handle.write("\n".join(lines) + "\n")
+                cite = "x.py:1" if len(lines) == 1 else f"x.py:1-{len(lines)}"
+                callout = CodeCallout(display="x", language="python", cite=cite, evidence=(token,))
+                failures = verify_storyboard(_storyboard(callout, repo_root=root))
+                if found:
+                    self.assertEqual(failures, [])
+                else:
+                    self.assertEqual([f.missing for f in failures], [(token,)])
 
 
 def _storyboard_for(repo_root, commit="", allow_dirty=False):

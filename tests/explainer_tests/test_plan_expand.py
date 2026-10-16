@@ -134,6 +134,23 @@ class ExpandTests(unittest.TestCase):
         self.assertEqual(claim["cite"], "decay.rs:90")
         self.assertTrue(claim["evidence"])
 
+    def test_cites_are_trimmed_to_the_lines_their_evidence_holds(self):
+        # The citation gate fails a cite whose first or last line holds no
+        # evidence. A model that cites a whole block ends on its closing
+        # brace, which no extracted token can hold, so expansion narrows both
+        # kinds of cite (a code beat's own and a caption's claim) to the lines
+        # the evidence covers.
+        beat = _code_beat(
+            cite_start=90,
+            cite_end=93,
+            caption="the floor is 0.4",
+            caption_cite={"focus_index": 0, "start": 90, "end": 93},
+        )
+        doc, dropped = _expanded([beat, _code_beat(id="companion")])
+        self.assertEqual(dropped, ())
+        self.assertEqual(doc["beats"][0]["code_callout"]["cite"], "decay.rs:90-92")
+        self.assertEqual(doc["beats"][0]["claims"][0]["cite"], "decay.rs:90-92")
+
     def test_diagram_caption_cite_becomes_a_verified_claim(self):
         # Same generalization as the code-beat version above: a diagram
         # beat's caption_cite is just as verifiable as a code beat's own

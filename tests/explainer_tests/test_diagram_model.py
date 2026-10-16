@@ -121,6 +121,15 @@ class DiagramValidationTests(unittest.TestCase):
     def test_cite_without_evidence_rejected(self):
         self._bad("nodes:\n  - {id: a, shape: dot, at: left, cite: 'f.py:1'}", "evidence")
 
+    def test_cite_with_token_that_matches_any_text_rejected(self):
+        for token in ("''", "'//'"):
+            with self.subTest(token=token):
+                self._bad(
+                    "nodes:\n  - {id: a, shape: dot, at: left, cite: 'f.py:1', "
+                    "evidence: ['x', %s]}" % token,
+                    "prove something",
+                )
+
     def test_unknown_key_rejected(self):
         self._bad("nodes:\n  - {id: a, shape: dot, at: left, lable: oops}", "lable")
 

@@ -66,7 +66,7 @@ PAYLOAD = {
 }
 
 
-def _plan_into(root, out):
+def _plan_into(root, out, payload=PAYLOAD):
     argv = [
         "plan",
         "--repo",
@@ -80,8 +80,8 @@ def _plan_into(root, out):
     ]
     with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
         with (
-            patch("explainer.cli.AnthropicClient", return_value=FakeClient(PAYLOAD)),
-            patch("explainer.cli.GrokCliClient", return_value=FakeClient(PAYLOAD)),
+            patch("explainer.cli.AnthropicClient", return_value=FakeClient(payload)),
+            patch("explainer.cli.GrokCliClient", return_value=FakeClient(payload)),
         ):
             return main(argv)
 
@@ -98,6 +98,21 @@ class PlannerEndToEndTests(unittest.TestCase):
             out = os.path.join(directory, "s.story.yaml")
             self.assertEqual(_plan_into(root, out), 0)
             self.assertEqual(_verify(out), 0)
+
+    def test_a_cite_with_blank_edge_lines_is_narrowed_and_still_passes(self):
+        # A model cites whole blocks, blank lines around them included. The
+        # gate fails a cite whose first or last line holds no evidence, so the
+        # planner must narrow each cite, at either end, on the way out.
+        payload = copy.deepcopy(PAYLOAD)
+        payload["beats"][0].update(cite_start=1, cite_end=3)
+        payload["beats"][1].update(cite_start=4, cite_end=6)
+        root = _repo()
+        with tempfile.TemporaryDirectory() as directory:
+            out = os.path.join(directory, "s.story.yaml")
+            self.assertEqual(_plan_into(root, out, payload), 0)
+            self.assertEqual(_verify(out), 0)
+            cites = [beat.code_callout.cite for beat in load_storyboard(out).beats]
+        self.assertEqual(cites, ["decay.py:1-2", "decay.py:5-6"])
 
     def test_generated_evidence_reflects_the_real_source(self):
         root = _repo()

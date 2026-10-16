@@ -7,7 +7,7 @@ SHIPPED verifier. That test pins the property the whole planner rests on.
 
 import unittest
 
-from explainer.cite.verifier import _missing_evidence
+from explainer.cite.verifier import match_evidence
 from explainer.plan.facts import FocusTarget
 from explainer.plan.evidence import (
     BASE_TOKENS,
@@ -16,6 +16,12 @@ from explainer.plan.evidence import (
     _code_tokens,
     extract_evidence,
 )
+
+
+def _missing(text, tokens):
+    """The tokens the real citation gate cannot find in cited *text*."""
+    return match_evidence(text.split("\n"), tokens).missing
+
 
 RUST = FocusTarget(
     path="decay.rs",
@@ -176,7 +182,7 @@ class ExtractEvidenceTests(unittest.TestCase):
                 tokens = extract_evidence(target, lo, hi)
                 offset = lo - target.start
                 cited = "\n".join(target.text.split("\n")[offset : offset + (hi - lo) + 1])
-                self.assertEqual(_missing_evidence(cited, tokens), [])
+                self.assertEqual(_missing(cited, tokens), [])
 
     def test_floor_requires_two_tokens_with_one_strong(self):
         # The name promises "with one strong", so assert it: a count-only
@@ -287,7 +293,7 @@ class FragmentSuppressionTests(unittest.TestCase):
         # turn up as a miss once fragments stop starving line 2 of coverage.
         tokens = extract_evidence(FRAGMENT_STARVED, 1, 2)
         mutated = FRAGMENT_STARVED.text.replace("threshold", "ceiling")
-        self.assertEqual(_missing_evidence(mutated, tokens), ["threshold"])
+        self.assertEqual(_missing(mutated, tokens), ["threshold"])
 
     def test_standalone_digit_elsewhere_in_range_is_still_legitimate(self):
         # The guardrail the fix must not overshoot: a "0" or "5" that is NOT
@@ -323,7 +329,7 @@ class ProportionalBudgetTests(unittest.TestCase):
         offset = lo - target.start
         cited = "\n".join(target.text.split("\n")[offset : offset + (hi - lo) + 1])
         return {
-            label: bool(_missing_evidence(cited.replace(old, new), tokens))
+            label: bool(_missing(cited.replace(old, new), tokens))
             for label, (old, new) in mutations.items()
         }
 
@@ -373,8 +379,8 @@ class ProportionalBudgetTests(unittest.TestCase):
         )
         tokens = extract_evidence(target, 1, 3)
         drifted = target.text.replace("gamma = 1", "gamma = 2")
-        self.assertEqual(_missing_evidence(drifted, tokens), [])
-        self.assertEqual(_missing_evidence(drifted, ["1", "1", "1"]), [])
+        self.assertEqual(_missing(drifted, tokens), [])
+        self.assertEqual(_missing(drifted, ["1", "1", "1"]), [])
 
     def test_a_one_line_cite_is_no_weaker_than_the_old_flat_budget(self):
         # The budget scales UP with range size and never down: a single line
@@ -407,7 +413,7 @@ class ProportionalBudgetTests(unittest.TestCase):
                 tokens = extract_evidence(target, lo, hi)
                 offset = lo - target.start
                 cited = "\n".join(target.text.split("\n")[offset : offset + (hi - lo) + 1])
-                self.assertEqual(_missing_evidence(cited, tokens), [])
+                self.assertEqual(_missing(cited, tokens), [])
 
 
 class WeakStopwordFilterTests(unittest.TestCase):

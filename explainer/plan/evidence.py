@@ -5,9 +5,9 @@ the tokens that prove it. A CODE token is a literal substring of the cited
 range. A PROSE token is a whitespace-normalized JOIN of one -- see
 _prose_phrases -- because prose can wrap or double-space a phrase that is
 still, after normalization, exactly what is on the page. Either way,
-explainer/cite/verifier.py compares whitespace-normalized text, so both kinds
-are guaranteed findable and generated evidence cannot fail its own citation
-gate. That is deliberate: it leaves the gate doing the job it should do,
+explainer/cite/verifier.py compares whitespace-normalized whole words, so both
+kinds are always found, and with expand.py trimming each cite to them, generated
+evidence cannot fail its gate. That is deliberate: it leaves the gate doing its job,
 catching future source DRIFT, instead of catching hallucination.
 
 It also removes the failure mode where a model, asked to fix a red gate,
@@ -227,7 +227,7 @@ def _spread(entries, budget):
     token still findable on another, and the gate stays green -- cite
     "alpha = 1 / beta = 1 / gamma = 1", change the last to 2, and nothing goes
     red. De-duplicating less does not help: emitting "1" three times is three
-    identical substring checks, and none of them knows which line it came
+    identical checks, and none of them knows which line it came
     from. Closing this needs a position-aware evidence format in the SHIPPED
     verifier, or code tokens spanning more than one lexeme -- both real design
     changes, neither one a tweak to selection. Pinned by
