@@ -6,6 +6,7 @@ an unsafe plot function is rejected.
 """
 
 import dataclasses
+import datetime
 import glob
 import os
 import unittest
@@ -529,6 +530,119 @@ class CodegenTests(unittest.TestCase):
         sb = self._plot_beat(spec={"annotations": [{"kind": "hline", "y": 1, "region": 1}]})
         with self.assertRaises(CodegenError):
             generate_scene(sb)
+
+    # --- malformed plot spec values: a CodegenError, never a raw exception or broken code ---
+
+    def _assert_rejected(self, spec, message):
+        """``spec`` fails codegen with a CodegenError matching ``message`` (a regex)."""
+        with self.assertRaisesRegex(CodegenError, message):
+            generate_scene(self._plot_beat(spec=spec))
+
+    def test_axis_bound_that_is_not_a_number_raises(self):
+        # A string raised TypeError at (max - min) / 4; a YAML date passed and wrote
+        # 2020-01-01 into the scene, which Python then refused to compile.
+        bad = ("a", "5", None, True, [0], {}, datetime.date(2020, 1, 1))
+        for axis in ("x", "y"):
+            for key in ("min", "max"):
+                for value in bad:
+                    with self.subTest(axis=axis, key=key, value=value):
+                        self._assert_rejected(
+                            {axis: {key: value}},
+                            rf"^beat 'b': plot {axis}\.{key} must be a number, got ",
+                        )
+
+    def test_axis_bound_yaml_read_as_text_gets_a_hint(self):
+        # PyYAML reads an unquoted 1e6 as the string '1e6'; say so, not just "got '1e6'".
+        self._assert_rejected(
+            {"x": {"max": "1e6"}},
+            r"^beat 'b': plot x\.max must be a number, got '1e6' \(YAML read it as text: "
+            r"drop any quotes, and write an exponent as 1\.0e\+6\)$",
+        )
+        with self.assertRaises(CodegenError) as caught:
+            generate_scene(self._plot_beat(spec={"x": {"max": "ten"}}))
+        self.assertNotIn("YAML read it as text", str(caught.exception))
+
+    def test_axis_bound_that_is_not_finite_raises(self):
+        # nan/inf passed and wrote a bare nan/inf into the scene: a NameError in manim.
+        # An int too large for a float overflowed at (max - min) / 4.
+        bad = (float("nan"), float("inf"), float("-inf"), 10**400)
+        for axis in ("x", "y"):
+            for key in ("min", "max"):
+                for value in bad:
+                    with self.subTest(axis=axis, key=key, value=value):
+                        self._assert_rejected(
+                            {axis: {key: value}},
+                            rf"^beat 'b': plot {axis}\.{key} must be finite, got ",
+                        )
+
+    def test_axis_min_must_be_below_max(self):
+        for axis in ("x", "y"):
+            for bounds in (
+                {"min": 5, "max": 5},
+                {"min": 10, "max": 0},
+                {"max": -5},
+                # Distinct ints, one float: manim's Axes divided by a zero span.
+                {"min": 10**20, "max": 10**20 + 1},
+            ):
+                with self.subTest(axis=axis, bounds=bounds):
+                    self._assert_rejected(
+                        {axis: bounds}, rf"^beat 'b': plot {axis}\.min .* less than {axis}\.max"
+                    )
+
+    def test_axis_range_too_wide_for_a_float_raises(self):
+        # Each bound is finite, but max - min overflows: the tick step would be inf.
+        self._assert_rejected(
+            {"x": {"min": -1e308, "max": 1e308}}, r"^beat 'b': plot x range .* too wide"
+        )
+
+    def test_axis_that_is_not_a_mapping_raises(self):
+        for axis in ("x", "y"):
+            for value in (5, [0, 10], "0..10", True):
+                with self.subTest(axis=axis, value=value):
+                    self._assert_rejected(
+                        {axis: value}, rf"^beat 'b': plot {axis} must be a mapping"
+                    )
+
+    def test_well_formed_bounds_still_generate(self):
+        # Ints, floats, negatives, a big int, and a null axis (defaults) all still pass.
+        spec = {
+            "x": {"min": -0.5, "max": 10**20},
+            "y": None,
+            "curves": [{"fn": "x"}],
+            "annotations": [{"kind": "hline", "y": 0.5}],
+        }
+        src = generate_scene(self._plot_beat(spec=spec))
+        compile(src, "<generated>", "exec")
+        self.assertIn(f"x_range=[-0.5, {10**20}, ", src)
+        self.assertIn("y_range=[0, 1, 0.25]", src)
+
+    def test_plot_spec_that_is_not_a_mapping_raises(self):
+        self._assert_rejected(["x"], r"^beat 'b': plot spec must be a mapping")
+
+    def test_curves_and_annotations_must_be_lists(self):
+        for key in ("curves", "annotations"):
+            for value in ("x", {"fn": "x"}, 5):
+                with self.subTest(key=key, value=value):
+                    self._assert_rejected({key: value}, rf"^beat 'b': plot {key} must be a list")
+
+    def test_curve_and_annotation_entries_must_be_mappings(self):
+        # curves: [5] raised AttributeError on curve.get.
+        for key in ("curves", "annotations"):
+            for value in (5, "x", None, ["x"]):
+                with self.subTest(key=key, value=value):
+                    self._assert_rejected(
+                        {key: [value]}, rf"^beat 'b': plot {key}\[0\] must be a mapping"
+                    )
+
+    def test_annotation_y_that_is_not_finite_raises(self):
+        # float() accepts most of these, and a bare nan/inf in the scene is a NameError
+        # in manim; float() of an int too large for a float raised OverflowError.
+        for y in (float("nan"), "inf", "-Infinity", 1e400, 10**400):
+            with self.subTest(y=y):
+                self._assert_rejected(
+                    {"annotations": [{"kind": "hline", "y": y}]},
+                    r"^beat 'b': annotation y must be finite, got ",
+                )
 
     # --- voiced plot plays: capped, then hold for the rest of the speech ---
 

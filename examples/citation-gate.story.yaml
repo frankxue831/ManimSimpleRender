@@ -126,7 +126,7 @@ beats:
         evidence: ["if not source.commit: return []"]
       - cite: "explainer/cite/verifier.py:361-363"
         evidence: ["failures = list( verify_source_state(storyboard.source, repo_root=root, ignore_paths=ignore_paths) )"]
-      - cite: "explainer/codegen/manim_codegen.py:281"
+      - cite: "explainer/codegen/manim_codegen.py:358"
         evidence: ['badge = f"verified @ {source.commit}" if source.commit else "verified"']
     caption: "a pinned commit must be HEAD, on a clean tree unless allowed"
     narration: >

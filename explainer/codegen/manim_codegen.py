@@ -11,6 +11,7 @@ Plot curve functions are validated through :mod:`plot_expr` before being embedde
 as lambdas.
 """
 
+import math
 from dataclasses import dataclass
 
 from explainer.storyboard.model import display_line_count
@@ -163,7 +164,77 @@ def _emit_tick_numbers(axis, spec, lo, step, other_min):
     ]
 
 
-def _emit_plot(spec, theme):
+def _is_finite(value):
+    try:
+        return math.isfinite(value)
+    except OverflowError:  # an int too large for a float
+        return False
+
+
+def _text_number_hint(value):
+    """A hint for a bound that YAML read as text although it spells a number.
+
+    PyYAML (YAML 1.1) reads ``1e6`` and ``1.0e6`` as strings; only ``1.0e+6`` is a float.
+    """
+    if not isinstance(value, str):
+        return ""
+    try:
+        float(value)
+    except ValueError:
+        return ""
+    return " (YAML read it as text: drop any quotes, and write an exponent as 1.0e+6)"
+
+
+def _plot_axis(spec, axis, default_max, beat_id):
+    """The ``x``/``y`` mapping of a plot spec and its ``(min, max)``, checked.
+
+    The bounds are written into the scene as Python literals, so each must be a real
+    finite number (a YAML date or ``.nan`` would emit code that fails only in manim),
+    and min < max (as floats, which is how manim plots them) so the tick step is positive.
+    """
+    data = spec.get(axis)
+    if data is None:  # absent or null: the default axis
+        data = {}
+    if not isinstance(data, dict):
+        raise CodegenError(
+            f"beat {beat_id!r}: plot {axis} must be a mapping (label, min, max, numbers), "
+            f"got {data!r}"
+        )
+    bounds = []
+    for key, default in (("min", 0), ("max", default_max)):
+        value = data.get(key, default)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise CodegenError(
+                f"beat {beat_id!r}: plot {axis}.{key} must be a number, got {value!r}"
+                + _text_number_hint(value)
+            )
+        if not _is_finite(value):
+            raise CodegenError(f"beat {beat_id!r}: plot {axis}.{key} must be finite, got {value!r}")
+        bounds.append(value)
+    lo, hi = bounds
+    if not float(lo) < float(hi):  # 10**20 and 10**20 + 1 are one float
+        raise CodegenError(
+            f"beat {beat_id!r}: plot {axis}.min ({lo!r}) must be less than {axis}.max ({hi!r})"
+        )
+    if not math.isfinite(float(hi) - float(lo)):
+        raise CodegenError(f"beat {beat_id!r}: plot {axis} range {lo!r}..{hi!r} is too wide")
+    return data, lo, hi
+
+
+def _plot_items(spec, key, beat_id):
+    """The ``curves``/``annotations`` list of a plot spec, each entry a mapping."""
+    items = spec.get(key)
+    if items is None:
+        items = []
+    if not isinstance(items, (list, tuple)):
+        raise CodegenError(f"beat {beat_id!r}: plot {key} must be a list, got {items!r}")
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise CodegenError(f"beat {beat_id!r}: plot {key}[{i}] must be a mapping, got {item!r}")
+    return items
+
+
+def _emit_plot(spec, theme, beat_id):
     """Emit Axes + sans labels + curves + annotations, grouped as ``plot_group``.
 
     Returns ``(lines, curves, anns, legend)``; each ann is a ``(var, region)`` pair,
@@ -171,10 +242,10 @@ def _emit_plot(spec, theme):
     annotations are constructed but not yet animated; :func:`_emit_beat` decides the
     reveal choreography.
     """
-    x = spec.get("x", {}) or {}
-    y = spec.get("y", {}) or {}
-    xmin, xmax = x.get("min", 0), x.get("max", 10)
-    ymin, ymax = y.get("min", 0), y.get("max", 1)
+    if not isinstance(spec, dict):
+        raise CodegenError(f"beat {beat_id!r}: plot spec must be a mapping, got {spec!r}")
+    x, xmin, xmax = _plot_axis(spec, "x", 10, beat_id)
+    y, ymin, ymax = _plot_axis(spec, "y", 1, beat_id)
     xstep = (xmax - xmin) / 4.0 or 1
     ystep = (ymax - ymin) / 4.0 or 1
     x_numbers = _emit_tick_numbers("x", x, xmin, xstep, ymin)
@@ -194,7 +265,7 @@ def _emit_plot(spec, theme):
     ]
     curves = []
     legend_entries = []  # (color, label) for curves that carry an authored label
-    for i, curve in enumerate(spec.get("curves", []) or []):
+    for i, curve in enumerate(_plot_items(spec, "curves", beat_id)):
         fn = str(curve.get("fn", "0"))
         try:
             safe_fn = normalize_curve(fn)
@@ -219,7 +290,7 @@ def _emit_plot(spec, theme):
         if label:
             legend_entries.append((color, label))
     anns = []
-    for i, ann in enumerate(spec.get("annotations", []) or []):
+    for i, ann in enumerate(_plot_items(spec, "annotations", beat_id)):
         kind = ann.get("kind")
         if kind != "hline":
             raise CodegenError(f"unsupported annotation kind {kind!r} (v1 supports: hline)")
@@ -227,6 +298,12 @@ def _emit_plot(spec, theme):
             yv = float(ann.get("y", 0))
         except (TypeError, ValueError) as exc:
             raise CodegenError(f"annotation y must be numeric, got {ann.get('y')!r}") from exc
+        except OverflowError:  # an int too large for a float
+            yv = math.inf
+        if not math.isfinite(yv):
+            raise CodegenError(
+                f"beat {beat_id!r}: annotation y must be finite, got {ann.get('y')!r}"
+            )
         color = _accent_color(ann.get("accent"), theme, "#888888")
         label_text = f"{yv:g} {ann.get('label', '')}".strip()
         var = f"ann{i}"
@@ -349,7 +426,7 @@ def _emit_beat(beat, storyboard):
         )
 
     if has_plot:
-        plot_lines, curves, anns, legend = _emit_plot(beat.canvas.spec, theme)
+        plot_lines, curves, anns, legend = _emit_plot(beat.canvas.spec, theme, beat.id)
         out.extend(plot_lines)
     if has_code:
         callout = beat.code_callout
