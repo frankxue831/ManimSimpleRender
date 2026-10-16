@@ -3,10 +3,12 @@
 The differentiator: every on-screen code fact cites real source lines and lists
 evidence tokens that MUST be present there, as whole words, with evidence on the
 first and last cited lines. Positive + negative cases are hermetic (temp source
-files); the shipped example storyboard is verified against this repository's
-own explainer/plan/evidence.py, so moving those lines means updating its cites.
+files); the shipped example storyboards (examples/*.story.yaml) are verified
+against this repository's own source, so an edit that moves cited evidence out
+of its range, or off a range's first or last line, fails here.
 """
 
+import glob
 import os
 import shutil
 import subprocess
@@ -151,6 +153,17 @@ class ExampleStoryboardTests(unittest.TestCase):
         sb = load_storyboard(EXAMPLE)
         failures = verify_storyboard(sb)
         self.assertEqual(failures, [], f"unexpected citation failures: {failures}")
+
+    def test_every_shipped_storyboard_verifies_against_own_source(self):
+        # Each examples/*.story.yaml cites this repo by line number. CI fails here when
+        # an edit pushes an evidence token out of its cited range, or leaves a range's
+        # first or last line without evidence.
+        paths = sorted(glob.glob(os.path.join(os.path.dirname(EXAMPLE), "*.story.yaml")))
+        self.assertIn(EXAMPLE, paths)
+        for path in paths:
+            with self.subTest(storyboard=os.path.basename(path)):
+                failures = verify_storyboard(load_storyboard(path))
+                self.assertEqual(failures, [], f"unexpected citation failures: {failures}")
 
     def test_a_tampered_constant_would_fail(self):
         # Guard against a rubber-stamp gate: swap evidence to a wrong constant and
