@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass
 
 from explainer.cite.verifier import match_evidence
 from explainer.plan.anchors import assign
-from explainer.plan.evidence import WeakCiteError, candidate_lines, extract_evidence
+from explainer.plan.evidence import WeakCiteError, content_lines, extract_evidence
 from explainer.storyboard.cites import format_cite
 from explainer.storyboard.model import Theme
 
@@ -75,16 +75,20 @@ def _spans(numbers):
 
 @dataclass(frozen=True)
 class DroppedLines:
-    """Lines that trimming cut from a cite although they could hold evidence.
+    """Lines of code or text that trimming cut from a cite.
 
     The beat still ships, with the trimmed cite, so its on-screen label covers
-    less than the display may show.
+    less than the display may show. Such a line holds no token candidate (in
+    code, every word on it is a keyword, a stopword or too short, like the
+    "Ok" of Rust's ``Ok(())``; in prose, it is too short for a phrase), because
+    evidence always reaches the first and last lines that hold one; a cut line
+    that does hold one means that broke.
     """
 
     beat_id: str
     cite: str  # as the plan asked for it
     kept: str  # as written: trimmed to the lines the evidence reaches
-    lines: tuple  # the cut lines that hold an evidence candidate
+    lines: tuple  # the cut lines that hold content (see content_lines)
 
     def __str__(self):
         noun, pronoun = ("line", "it") if len(self.lines) == 1 else ("lines", "them")
@@ -112,10 +116,10 @@ def _evidence_range(target, start, end, tokens):
     shift by a line with every token still inside it. Citing this range
     instead keeps a generated storyboard passing its gate by construction. It
     is measured with the gate's own matcher, so the two cannot disagree.
-    extract_evidence keeps a token on the first and last lines that can hold
-    one, so the trim cuts only lines that cannot; _cited reports any cut that
-    reaches a line that could, since the label then covers less than the
-    display shows.
+    extract_evidence keeps a token on the first and last lines that hold a
+    candidate, so the trim cuts only lines without one; _cited reports any of
+    those that still hold code or text, since the label then covers less than
+    the display shows.
     """
     offset = start - target.start
     lines = target.text.split("\n")[offset : offset + (end - start) + 1]
@@ -127,14 +131,14 @@ def _cited(beat_id, target, start, end):
     """Evidence for ``target``'s lines ``start``..``end``, and the cite trimmed to it.
 
     Returns ``(cite, tokens, cut)``. ``cut`` holds a :class:`DroppedLines` when
-    the trim cut a line that could hold evidence, so that cut is reported
-    instead of silent; it is empty when only blank lines, braces and the like
-    were cut.
+    the trim cut a line that holds code or text, so that cut is reported
+    instead of silent; it is empty when only blank lines, braces and
+    keyword-only lines were cut.
     """
     tokens = extract_evidence(target, start, end)
     first, last = _evidence_range(target, start, end, tokens)
     kept = format_cite(target.path, first, last)
-    lines = tuple(n for n in candidate_lines(target, start, end) if not first <= n <= last)
+    lines = tuple(n for n in content_lines(target, start, end) if not first <= n <= last)
     if not lines:
         return kept, tokens, ()
     return kept, tokens, (DroppedLines(beat_id, format_cite(target.path, start, end), kept, lines),)
@@ -215,7 +219,7 @@ def expand(plan, factsheet, output_dir):
     ``dropped`` lists, in beat order, what the storyboard leaves out of the
     plan: a :class:`DroppedBeat` for each beat dropped, and a
     :class:`DroppedLines` for each cite of a shipped beat whose trim cut a
-    line that could hold evidence.
+    line of code or text.
 
     A beat's cite (its own, or a caption_cite naming a separate claim) can
     fail evidence extraction on either a code or a diagram beat -- a diagram

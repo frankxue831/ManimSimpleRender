@@ -68,16 +68,19 @@ def confirm_write_is_blocked(case, directory):
     case.skipTest("permissions do not block writes in this environment (e.g. running as root)")
 
 
-def evidence_reaching(lines):
+def evidence_reaching(lines, from_end=False):
     """Patch the planner's evidence selection to cover only the first *lines*
-    lines of each cite, as a selection whose token budget ran out early would.
+    lines of each cite (the last ones with ``from_end``), as a selection whose
+    token budget ran out would.
 
-    expand.py then trims the cite past lines that hold code. The real
-    selection keeps a token on the first and last lines that can hold one,
+    expand.py then trims the cite past lines holding token candidates. The
+    real selection keeps a token on the first and last lines that hold one,
     so this patch is how a test reaches the report of such a cut.
     """
 
     def select(target, start, end):
+        if from_end:
+            return extract_evidence(target, max(start, end - lines + 1), end)
         return extract_evidence(target, start, min(end, start + lines - 1))
 
     return patch("explainer.plan.expand.extract_evidence", side_effect=select)

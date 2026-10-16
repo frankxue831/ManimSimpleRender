@@ -513,9 +513,9 @@ def _comment_beat():
 
 
 class CutLinesReportTests(unittest.TestCase):
-    """A cite trimmed past a line that could hold evidence is reported once,
-    with the dropped beats, from the expansion that ships. evidence_reaching
-    stands in for a selection whose token budget ran out early."""
+    """A cite trimmed past a line of code is reported once, with the dropped
+    beats, from the expansion that ships. evidence_reaching stands in for a
+    selection whose token budget ran out early."""
 
     def _plan(self, client):
         root = make_git_repo({"decay.py": SRC + "# just a comment line\n"})

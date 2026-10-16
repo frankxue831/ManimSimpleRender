@@ -229,6 +229,56 @@ class LongCiteTests(unittest.TestCase):
         self.assertEqual(code, 3)
         self.assertIn("[scale] limits.py:1-20: evidence_not_found", err)
 
+    def test_a_cut_line_of_code_is_reported_and_the_rest_verifies(self):
+        # "Ok" is too short to be a token, so no evidence can reach Ok(()):
+        # the trim cuts it with the closing brace and says so, once.
+        root = make_git_repo({"check.rs": CHECK_SRC})
+        with tempfile.TemporaryDirectory() as directory:
+            out = os.path.join(directory, "s.story.yaml")
+            code, err = _plan(root, out, CHECK_PAYLOAD, focus="check.rs")
+            self.assertEqual(code, 0, err)
+            self.assertEqual(_verify_reporting(out), (0, ""))
+            cites = [beat.code_callout.cite for beat in load_storyboard(out).beats]
+        self.assertEqual(cites, ["check.rs:1-2", "check.rs:2"])
+        self.assertEqual(err.count("dropped line 3 from a cite in beat 'check': "), 1, err)
+        self.assertIn("check.rs:1-4 is written as check.rs:1-2", err)
+
+
+CHECK_SRC = "fn check(&self) -> Result<(), Error> {\n    validate(&self.config)?;\n    Ok(())\n}\n"
+
+CHECK_PAYLOAD = {
+    "title": "Checked config",
+    "subtitle": "A function that validates before it succeeds",
+    "beats": [
+        {
+            "id": "check",
+            "canvas_kind": "code",
+            "focus_index": 0,
+            "cite_start": 1,
+            "cite_end": 4,
+            "display": "fn check(&self) -> Result<(), Error> { ... Ok(()) }",
+            "narration": "The check validates the config, then succeeds.",
+            "caption": "",
+            "caption_cite": None,
+            "regions": [],
+            "diagram": None,
+        },
+        {
+            "id": "validate",
+            "canvas_kind": "code",
+            "focus_index": 0,
+            "cite_start": 2,
+            "cite_end": 2,
+            "display": "validate(&self.config)?;",
+            "narration": "A failed validation returns early.",
+            "caption": "",
+            "caption_cite": None,
+            "regions": [],
+            "diagram": None,
+        },
+    ],
+}
+
 
 class PlanOutputInsideTheCitedRepoTests(unittest.TestCase):
     """F1: writing the storyboard inside the repo it explains must work on a

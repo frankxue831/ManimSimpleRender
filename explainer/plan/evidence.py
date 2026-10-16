@@ -290,34 +290,50 @@ def _is_strong_phrase(phrase):
 
 
 def _line_candidates(line, kind):
-    """The ``(token, strong)`` evidence candidates on one cited *line*, strongest first."""
+    """The ``(token, strong)`` evidence candidates on one cited *line*, in the
+    order _spread takes a line's tokens: strong before weak for code, longest
+    first for prose."""
     if kind == "prose":
         return [(phrase, _is_strong_phrase(phrase)) for _index, phrase in _prose_phrases(line)]
     strong, weak = _code_tokens(line)
     return [(token, True) for _index, token in strong] + [(token, False) for _index, token in weak]
 
 
-def candidate_lines(target, start, end):
-    """The lines of ``start``..``end`` (1-based) that hold an evidence candidate.
+_WORD = re.compile(r"\w+")
 
-    A line without one -- blank, a lone brace, keywords only -- can never hold
-    evidence, so trimming it off a cite loses nothing a token could prove.
+
+def _holds_content(line, kind):
+    words = _WORD.findall(line)
+    if kind == "prose":
+        return bool(words) and not line.lstrip().startswith(("```", "~~~"))
+    return any(word.lower() not in _KEYWORDS for word in words)
+
+
+def content_lines(target, start, end):
+    """The lines of ``start``..``end`` (1-based) holding something a token could prove.
+
+    That is any word that, in code, is not a keyword. The other lines -- blank,
+    a lone brace or other punctuation, keywords only, and in prose a code
+    fence -- hold nothing to cite. A content line need not hold a token
+    candidate: no token is drawn from a word as short as the "Ok" of Rust's
+    ``Ok(())``, so trimming can cut it.
     """
     text = _cited_text(target, start, end)
     return tuple(
         start + index
         for index, line in enumerate(text.split("\n"))
-        if _line_candidates(line, target.kind)
+        if _holds_content(line, target.kind)
     )
 
 
 def _edge_candidates(lines, kind):
-    """The strongest ``(token, strong)`` candidate on the first and on the last
-    of *lines* that hold one: a single pair when one token serves both, as
-    when they are the same line, and none when no line holds a candidate.
+    """The first ``(token, strong)`` candidate on the first and on the last of
+    *lines* that hold one: a single pair when one token serves both, as when
+    they are the same line, and none when no line holds a candidate.
 
-    Each is drawn from its own line alone, so the gate finds it there even
-    when the same text was first seen on an earlier line.
+    Each is the token _spread takes first for its line, so an edge spends one
+    slot like any other line. It is drawn from its own line alone, so the gate
+    finds it there even when the same text was first seen on an earlier line.
     """
     bearing = [found for found in (_line_candidates(line, kind) for line in lines) if found]
     if not bearing:
@@ -329,15 +345,17 @@ def _edge_candidates(lines, kind):
 def extract_evidence(target, start, end):
     """Evidence tokens for ``target``'s lines ``start``..``end`` (1-based, inclusive).
 
-    The strongest candidate on the first and on the last line that holds one
-    is chosen before the budget is spread. expand.py trims each cite to the
-    lines its evidence reaches, so without these two a long cite whose budget
-    ran out early lost its last lines of code to the trim; with them, the trim
-    cuts only lines that cannot hold evidence. Every other slot is filled in
-    the order _spread gives, strong tokens first, as before.
+    The first candidate of the first and of the last line that holds one --
+    its strongest token, or for prose its longest phrase -- is chosen before
+    the budget is spread. expand.py trims each cite to the lines its evidence
+    reaches, so without these two a long cite whose budget ran out early lost
+    its last lines of code to the trim. With them, the trim cuts only lines
+    that hold no candidate, and expand.py reports those that still hold code
+    (content_lines). Every other slot is filled in the order _spread gives,
+    strong tokens first, as before.
 
-    Raises :class:`WeakCiteError` when the range cannot yield at least
-    ``MIN_TOKENS`` tokens including one strong one -- a cite that cannot prove
+    Raises :class:`WeakCiteError` when the range holds fewer than
+    ``MIN_TOKENS`` candidates, or no strong one -- a cite that cannot prove
     something is dropped rather than shipped with a weak badge.
     """
     text = _cited_text(target, start, end)
@@ -355,8 +373,16 @@ def extract_evidence(target, start, end):
     # The edge tokens leave the ranking rather than re-spreading what is left
     # of it, so when the old selection already held them nothing else changes.
     taken = {token for token, _strong in edges}
+    rest = [entry for entry in ranked if entry[0] not in taken]
     room = _token_budget(len(lines)) - len(edges)
-    picked = edges[:1] + [entry for entry in ranked if entry[0] not in taken][:room] + edges[1:]
+    kept = rest[:room]
+    late_strong = next((entry for entry in rest[room:] if entry[1]), None)
+    if late_strong and not any(strong for _token, strong in edges + kept):
+        # Prose is spread for coverage, not strength, so weak phrases can push
+        # the only strong one past the budget; it takes the last slot back.
+        # Code ranks every strong token first and never gets here.
+        kept = kept[:-1] + [late_strong]
+    picked = edges[:1] + kept + edges[1:]
     chosen = [token for token, _strong in picked]
     strong_count = len([token for token, strong in picked if strong])
     if len(chosen) < MIN_TOKENS or strong_count < 1:
