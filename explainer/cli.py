@@ -1,11 +1,12 @@
 """Explainer Engine CLI: ``plan``, ``verify``, and ``render`` a storyboard.
 
     explainer plan --repo R --focus F --topic T -o story.yaml   # draft from code
-    explainer verify story.yaml                 # citation gate only
+    explainer verify story.yaml                 # citation gate -> codegen (no render)
     explainer render story.yaml -o out.mp4      # verify -> codegen -> render
 
-Exit codes: 0 ok, 2 validation/schema error, 3 citation miss, 4 render failure,
-5 planner LLM failure, 6 planner produced nothing usable.
+Exit codes: 0 ok, 2 validation/schema error (including a storyboard that codegen
+rejects), 3 citation miss, 4 render failure, 5 planner LLM failure, 6 planner
+produced nothing usable.
 """
 
 import argparse
@@ -15,6 +16,7 @@ import sys
 from app.render.quality import known_quality_flags
 
 from explainer.cite.verifier import verify_storyboard
+from explainer.codegen.manim_codegen import CodegenError, generate_scene
 from explainer.render.adapter import (
     CitationGateError,
     RenderError,
@@ -109,6 +111,16 @@ def _verify(args):
     for beat in storyboard.beats:
         for cite, evidence in iter_citation_targets(beat):
             print(f"  [{beat.id}] {cite}  OK ({len(evidence)} evidence tokens)")
+    # Codegen is pure (no manim, no network), so a storyboard that cannot become
+    # a scene fails verify, including in CI without manim, instead of passing
+    # verify and failing only at render. It runs only on a gate-clean
+    # storyboard: gate failures are the trust problem.
+    try:
+        generate_scene(storyboard)
+    except CodegenError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(f"scene: OK (Manim scene code generated for {len(storyboard.beats)} beat(s))")
     return 0
 
 
@@ -117,7 +129,7 @@ def _render(args):
         out = render_storyboard(
             args.storyboard, args.output, quality=args.quality, on_log=lambda line: print(line)
         )
-    except StoryboardError as exc:
+    except (StoryboardError, CodegenError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     except CitationGateError as exc:
@@ -330,7 +342,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog="explainer", description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    verify = sub.add_parser("verify", help="run the citation gate against the source repo")
+    verify = sub.add_parser(
+        "verify",
+        help="run the citation gate against the source repo, then generate the scene code",
+    )
     verify.add_argument("storyboard")
     verify.set_defaults(fn=_verify)
 
