@@ -87,6 +87,15 @@ _BAD_ANNOTATION = """\
           - kind: vline
             y: 1
 """
+# Unquoted, YAML reads these bounds as dates, not numbers.
+_BAD_AXIS = """\
+        x: {min: 2020-01-01, max: 2021-01-01}
+        curves:
+          - fn: "x"
+"""
+_BAD_CURVE = """\
+        curves: [5]
+"""
 
 
 def _run_capturing(argv):
@@ -105,6 +114,8 @@ class CliCodegenErrorTests(unittest.TestCase):
     CASES = (
         ("curve fn", _BAD_FN, "error: unsafe/invalid curve fn"),
         ("annotation kind", _BAD_ANNOTATION, "error: unsupported annotation kind 'vline'"),
+        ("axis bound", _BAD_AXIS, "error: beat 'b1': plot x.min must be a number, got "),
+        ("curve entry", _BAD_CURVE, "error: beat 'b1': plot curves[0] must be a mapping, got 5"),
     )
 
     def setUp(self):
