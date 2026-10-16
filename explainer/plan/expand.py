@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass
 
 from explainer.cite.verifier import match_evidence
 from explainer.plan.anchors import assign
-from explainer.plan.evidence import WeakCiteError, extract_evidence
+from explainer.plan.evidence import WeakCiteError, candidate_lines, extract_evidence
 from explainer.storyboard.cites import format_cite
 from explainer.storyboard.model import Theme
 
@@ -58,6 +58,41 @@ class DroppedBeat:
     beat_id: str
     reason: str
 
+    def __str__(self):
+        return f"dropped beat {self.beat_id!r}: {self.reason}"
+
+
+def _spans(numbers):
+    """Ascending line numbers as runs: ``(1, 2, 3, 7)`` reads ``"1-3, 7"``."""
+    runs = []
+    for number in numbers:
+        if runs and number == runs[-1][1] + 1:
+            runs[-1][1] = number
+        else:
+            runs.append([number, number])
+    return ", ".join(str(first) if first == last else f"{first}-{last}" for first, last in runs)
+
+
+@dataclass(frozen=True)
+class DroppedLines:
+    """Lines that trimming cut from a cite although they could hold evidence.
+
+    The beat still ships, with the trimmed cite, so its on-screen label covers
+    less than the display may show.
+    """
+
+    beat_id: str
+    cite: str  # as the plan asked for it
+    kept: str  # as written: trimmed to the lines the evidence reaches
+    lines: tuple  # the cut lines that hold an evidence candidate
+
+    def __str__(self):
+        noun, pronoun = ("line", "it") if len(self.lines) == 1 else ("lines", "them")
+        return (
+            f"dropped {noun} {_spans(self.lines)} from a cite in beat {self.beat_id!r}: "
+            f"no evidence token reaches {pronoun}, so {self.cite} is written as {self.kept}"
+        )
+
 
 def _ascii(text, where):
     for source, replacement in _TRANSLITERATIONS.items():
@@ -76,9 +111,11 @@ def _evidence_range(target, start, end, tokens):
     evidence, because such a range (one ending on a closing brace, say) can
     shift by a line with every token still inside it. Citing this range
     instead keeps a generated storyboard passing its gate by construction. It
-    is measured with the gate's own matcher, so the two cannot disagree. When
-    the token budget runs out before the last lines of a long cite, those lines
-    are cut too, so the label can then cover less than the display shows.
+    is measured with the gate's own matcher, so the two cannot disagree.
+    extract_evidence keeps a token on the first and last lines that can hold
+    one, so the trim cuts only lines that cannot; _cited reports any cut that
+    reaches a line that could, since the label then covers less than the
+    display shows.
     """
     offset = start - target.start
     lines = target.text.split("\n")[offset : offset + (end - start) + 1]
@@ -86,26 +123,36 @@ def _evidence_range(target, start, end, tokens):
     return start + first, start + last
 
 
+def _cited(beat_id, target, start, end):
+    """Evidence for ``target``'s lines ``start``..``end``, and the cite trimmed to it.
+
+    Returns ``(cite, tokens, cut)``. ``cut`` holds a :class:`DroppedLines` when
+    the trim cut a line that could hold evidence, so that cut is reported
+    instead of silent; it is empty when only blank lines, braces and the like
+    were cut.
+    """
+    tokens = extract_evidence(target, start, end)
+    first, last = _evidence_range(target, start, end, tokens)
+    kept = format_cite(target.path, first, last)
+    lines = tuple(n for n in candidate_lines(target, start, end) if not first <= n <= last)
+    if not lines:
+        return kept, tokens, ()
+    return kept, tokens, (DroppedLines(beat_id, format_cite(target.path, start, end), kept, lines),)
+
+
 def _claims_for(beat, factsheet):
     cite = beat.caption_cite
     if cite is None:
-        return []
+        return [], ()
     target = factsheet.targets[cite.focus_index]
-    tokens = extract_evidence(target, cite.start, cite.end)
-    start, end = _evidence_range(target, cite.start, cite.end, tokens)
-    return [
-        {
-            "cite": format_cite(target.path, start, end),
-            "evidence": list(tokens),
-        }
-    ]
+    kept, tokens, cut = _cited(beat.id, target, cite.start, cite.end)
+    return [{"cite": kept, "evidence": list(tokens)}], cut
 
 
 def _code_beat(beat, factsheet):
     cite = beat.cite
     target = factsheet.targets[cite.focus_index]
-    tokens = extract_evidence(target, cite.start, cite.end)
-    start, end = _evidence_range(target, cite.start, cite.end, tokens)
+    kept, tokens, cut = _cited(beat.id, target, cite.start, cite.end)
     out = {
         "id": beat.id,
         "canvas": {"kind": "code", "spec": {}},
@@ -113,7 +160,7 @@ def _code_beat(beat, factsheet):
         "code_callout": {
             "display": _ascii(beat.display, f"beat {beat.id!r} display"),
             "language": target.language or "text",
-            "cite": format_cite(target.path, start, end),
+            "cite": kept,
             "evidence": list(tokens),
         },
     }
@@ -128,7 +175,7 @@ def _code_beat(beat, factsheet):
     ]
     if regions:
         out["code_callout"]["regions"] = regions
-    return out
+    return out, cut
 
 
 def _diagram_beat(beat):
@@ -165,6 +212,11 @@ def expand(plan, factsheet, output_dir):
     storyboard will be written to: ``meta.source.repo_root`` is stored relative
     to it, matching how ``load_storyboard`` resolves a relative root.
 
+    ``dropped`` lists, in beat order, what the storyboard leaves out of the
+    plan: a :class:`DroppedBeat` for each beat dropped, and a
+    :class:`DroppedLines` for each cite of a shipped beat whose trim cut a
+    line that could hold evidence.
+
     A beat's cite (its own, or a caption_cite naming a separate claim) can
     fail evidence extraction on either a code or a diagram beat -- a diagram
     beat's caption is prose like any other and gets the same treatment. When
@@ -175,10 +227,10 @@ def expand(plan, factsheet, output_dir):
     for beat in plan.beats:
         try:
             if beat.canvas_kind == "diagram":
-                out = _diagram_beat(beat)
+                out, cut = _diagram_beat(beat), ()
             else:
-                out = _code_beat(beat, factsheet)
-            claims = _claims_for(beat, factsheet)
+                out, cut = _code_beat(beat, factsheet)
+            claims, claim_cut = _claims_for(beat, factsheet)
             if claims:
                 out["claims"] = claims
             if beat.caption:
@@ -187,6 +239,7 @@ def expand(plan, factsheet, output_dir):
             dropped.append(DroppedBeat(beat_id=beat.id, reason=str(exc)))
             continue
         beats.append(out)
+        dropped.extend(cut + claim_cut)
 
     if len(beats) < MIN_BEATS:
         raise ExpandError(

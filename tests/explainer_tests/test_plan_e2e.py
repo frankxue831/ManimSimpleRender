@@ -66,29 +66,41 @@ PAYLOAD = {
 }
 
 
-def _plan_into(root, out, payload=PAYLOAD):
+def _plan(root, out, payload=PAYLOAD, focus="decay.py"):
+    """Run `explainer plan` on a FakeClient; return ``(exit code, stderr)``."""
     argv = [
         "plan",
         "--repo",
         root,
         "--focus",
-        "decay.py",
+        focus,
         "--topic",
         "how decay works",
         "-o",
         out,
     ]
-    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+    err = io.StringIO()
+    with redirect_stdout(io.StringIO()), redirect_stderr(err):
         with (
             patch("explainer.cli.AnthropicClient", return_value=FakeClient(payload)),
             patch("explainer.cli.GrokCliClient", return_value=FakeClient(payload)),
         ):
-            return main(argv)
+            return main(argv), err.getvalue()
+
+
+def _plan_into(root, out, payload=PAYLOAD):
+    return _plan(root, out, payload)[0]
+
+
+def _verify_reporting(out):
+    """Run the real `explainer verify`; return ``(exit code, stderr)``."""
+    err = io.StringIO()
+    with redirect_stdout(io.StringIO()), redirect_stderr(err):
+        return main(["verify", out]), err.getvalue()
 
 
 def _verify(out):
-    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-        return main(["verify", out])
+    return _verify_reporting(out)[0]
 
 
 class PlannerEndToEndTests(unittest.TestCase):
@@ -139,6 +151,83 @@ class PlannerEndToEndTests(unittest.TestCase):
                 handle.write(drifted)
 
             self.assertEqual(_verify(out), 3)
+
+
+# Twelve constants put two strong tokens on each of their lines, which fills
+# the 24-token budget, and the function under them holds only weak ones; a
+# blank line ends the file. The reviewer's example on pull request 8, where
+# the planner wrote a cite of lines 1-20 as 1-12 and said nothing.
+LONG_SRC = (
+    "\n".join(
+        [f"LIMIT_{i} = {i + 10}" for i in range(12)]
+        + [
+            "def scale(values, factor):",
+            "    running = []",
+            "    for value in values:",
+            "        running += [value * factor]",
+            "    total = sum(running)",
+            "    if total > factor:",
+            "        total = factor",
+            "    return round(total)",
+            "",
+        ]
+    )
+    + "\n"
+)
+
+LONG_PAYLOAD = {
+    "title": "Capped totals",
+    "subtitle": "Limits and the function that applies them",
+    "beats": [
+        {
+            "id": "scale",
+            "canvas_kind": "code",
+            "focus_index": 0,
+            "cite_start": 1,
+            "cite_end": 21,
+            "display": "def scale(values, factor): ... return round(total)",
+            "narration": "Twelve limits, then the function that caps a scaled total.",
+            "caption": "",
+            "caption_cite": None,
+            "regions": [],
+            "diagram": None,
+        },
+        {
+            "id": "first-limit",
+            "canvas_kind": "code",
+            "focus_index": 0,
+            "cite_start": 1,
+            "cite_end": 1,
+            "display": "LIMIT_0 = 10",
+            "narration": "The first limit is ten.",
+            "caption": "",
+            "caption_cite": None,
+            "regions": [],
+            "diagram": None,
+        },
+    ],
+}
+
+
+class LongCiteTests(unittest.TestCase):
+    def test_a_long_cite_keeps_its_code_and_the_gate_guards_its_last_line(self):
+        root = make_git_repo({"limits.py": LONG_SRC})
+        with tempfile.TemporaryDirectory() as directory:
+            out = os.path.join(directory, "s.story.yaml")
+            code, err = _plan(root, out, LONG_PAYLOAD, focus="limits.py")
+            self.assertEqual(code, 0, err)
+            self.assertEqual(_verify_reporting(out), (0, ""))
+            cites = [beat.code_callout.cite for beat in load_storyboard(out).beats]
+            # Only the blank line 21, which cannot hold evidence, is trimmed.
+            self.assertEqual(cites, ["limits.py:1-20", "limits.py:1"])
+            self.assertNotIn("dropped", err)
+
+            drifted = LONG_SRC.replace("return round(total)", "return int(total)")
+            with open(os.path.join(root, "limits.py"), "w", encoding="utf-8") as handle:
+                handle.write(drifted)
+            code, err = _verify_reporting(out)
+        self.assertEqual(code, 3)
+        self.assertIn("[scale] limits.py:1-20: evidence_not_found", err)
 
 
 class PlanOutputInsideTheCitedRepoTests(unittest.TestCase):

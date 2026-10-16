@@ -14,6 +14,9 @@ from explainer.plan.evidence import (
     MAX_TOKENS,
     WeakCiteError,
     _code_tokens,
+    _spread,
+    _token_budget,
+    candidate_lines,
     extract_evidence,
 )
 
@@ -125,6 +128,76 @@ LADDER = FocusTarget(
         ")"
     ),
     language="python",
+    kind="code",
+)
+
+# Twelve constants put two strong tokens on each of their lines, which fills
+# the 24-token budget, and the function under them holds only weak ones. The
+# reviewer's example on pull request 8: a cite of lines 1-20 was trimmed to
+# 1-12, cutting the whole function without a word.
+CONSTANTS_THEN_FUNCTION = FocusTarget(
+    path="limits.py",
+    start=1,
+    end=20,
+    text="\n".join(
+        [f"LIMIT_{i} = {i + 10}" for i in range(12)]
+        + [
+            "def scale(values, factor):",
+            "    running = []",
+            "    for value in values:",
+            "        running += [value * factor]",
+            "    total = sum(running)",
+            "    if total > factor:",
+            "        total = factor",
+            "    return round(total)",
+        ]
+    ),
+    language="python",
+    kind="code",
+)
+
+# More lines holding a strong token than the budget has slots, so even the
+# first pass of _spread, one token per line, ran out before the last lines.
+LONG_TABLE = FocusTarget(
+    path="table.py",
+    start=1,
+    end=30,
+    text="\n".join(f'value_{i} = "token_{i}"' for i in range(30)),
+    language="python",
+    kind="code",
+)
+
+LONG_NOTES = FocusTarget(
+    path="notes.md",
+    start=1,
+    end=30,
+    text="\n".join(f"Step {i} retries the upload with a longer backoff." for i in range(30)),
+    language="markdown",
+    kind="prose",
+)
+
+# Every line could fill the budget alone, and the first and last lines' own
+# strongest tokens are taken anyway: the case where nothing may change.
+DENSE = FocusTarget(
+    path="dense.py",
+    start=1,
+    end=3,
+    text=(
+        'route("alpha", "beta", "gamma", "delta")\n'
+        'route("one", "two", "three", "four")\n'
+        'route("red", "green", "blue", "cyan")'
+    ),
+    language="python",
+    kind="code",
+)
+
+# Code between a blank first line, a keyword-only line and a closing brace.
+FENCED = FocusTarget(
+    path="m.rs",
+    start=10,
+    end=14,
+    text="\nlet floor = f32::max(access_floor, grounding_floor);\n} else {\nlet m = 0.5;\n}",
+    language="rust",
     kind="code",
 )
 
@@ -459,6 +532,78 @@ class WeakStopwordFilterTests(unittest.TestCase):
         )
         with self.assertRaises(WeakCiteError):
             extract_evidence(target, 1, 1)
+
+
+def _cited_lines(target, lo, hi):
+    offset = lo - target.start
+    return target.text.split("\n")[offset : offset + (hi - lo) + 1]
+
+
+def _evidence_span(target, lo, hi):
+    """The 0-based ``(first, last)`` cited lines the real gate finds evidence on."""
+    return match_evidence(_cited_lines(target, lo, hi), extract_evidence(target, lo, hi)).span
+
+
+class EdgeLineTests(unittest.TestCase):
+    """Evidence reaches the first and last cited lines that can hold any.
+
+    expand.py trims every cite it writes to the lines its evidence reaches,
+    because the gate fails a cite whose first or last line holds none. When
+    the budget ran out before the last lines of a long cite, that trim cut
+    real code, and the on-screen label covered less than the display showed.
+    """
+
+    def test_the_last_line_keeps_evidence_after_the_budget_runs_out(self):
+        self.assertEqual(_evidence_span(CONSTANTS_THEN_FUNCTION, 1, 20), (0, 19))
+
+    def test_a_cite_longer_than_the_budget_keeps_evidence_on_its_last_line(self):
+        for target in (LONG_TABLE, LONG_NOTES):
+            with self.subTest(path=target.path):
+                self.assertEqual(_evidence_span(target, 1, 30), (0, 29))
+
+    def test_the_trim_never_cuts_a_line_that_could_hold_evidence(self):
+        # The property expand.py's cut report rests on: evidence spans every
+        # line candidate_lines names, so a trim to it cuts none of them.
+        for target, lo, hi in (
+            (CONSTANTS_THEN_FUNCTION, 1, 20),
+            (CONSTANTS_THEN_FUNCTION, 5, 17),
+            (LONG_TABLE, 1, 30),
+            (LONG_NOTES, 3, 30),
+            (DENSE, 1, 3),
+            (FENCED, 10, 14),
+            (RUST, 90, 94),
+            (LADDER, 11, 17),
+            (MIXED, 1, 2),
+        ):
+            with self.subTest(path=target.path, lo=lo, hi=hi):
+                first, last = _evidence_span(target, lo, hi)
+                bearing = candidate_lines(target, lo, hi)
+                self.assertLessEqual(lo + first, bearing[0])
+                self.assertGreaterEqual(lo + last, bearing[-1])
+
+    def test_lines_that_cannot_hold_evidence_are_left_for_the_trim(self):
+        # A blank line, "} else {" and a closing brace hold no candidate.
+        self.assertEqual(candidate_lines(FENCED, 10, 14), (11, 13))
+        self.assertEqual(_evidence_span(FENCED, 10, 14), (1, 3))
+
+    def test_strong_tokens_still_fill_the_rest_of_the_budget(self):
+        # Only the edge lines take a token out of turn: "round" holds the last
+        # line. Every other slot still goes to a strong token while one is
+        # left, so the function's other weak identifiers stay out.
+        tokens = extract_evidence(CONSTANTS_THEN_FUNCTION, 1, 20)
+        self.assertEqual(len(tokens), MAX_TOKENS)
+        self.assertIn("round", tokens)
+        for weak in ("scale", "values", "factor", "running", "value", "total"):
+            self.assertNotIn(weak, tokens)
+
+    def test_a_selection_that_already_reaches_both_edges_is_unchanged(self):
+        # Taking the edge tokens first must not reshuffle the rest of the
+        # spread: dropping them from it and spreading the remainder afresh
+        # would trade a token here for another the old selection never chose.
+        lines = _cited_lines(DENSE, 1, 3)
+        strong, _weak = _code_tokens("\n".join(lines))
+        before = _spread(strong, _token_budget(len(lines)))
+        self.assertEqual(sorted(extract_evidence(DENSE, 1, 3)), sorted(before))
 
 
 if __name__ == "__main__":

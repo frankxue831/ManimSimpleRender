@@ -8,6 +8,9 @@ probe) lands here once instead of once per test file.
 import os
 import subprocess
 import tempfile
+from unittest.mock import patch
+
+from explainer.plan.evidence import extract_evidence
 
 # The host's global git config must not leak into fixtures (commit signing,
 # templates, hooks would all break the canned init/commit sequence).
@@ -63,3 +66,18 @@ def confirm_write_is_blocked(case, directory):
         return
     os.remove(probe)
     case.skipTest("permissions do not block writes in this environment (e.g. running as root)")
+
+
+def evidence_reaching(lines):
+    """Patch the planner's evidence selection to cover only the first *lines*
+    lines of each cite, as a selection whose token budget ran out early would.
+
+    expand.py then trims the cite past lines that hold code. The real
+    selection keeps a token on the first and last lines that can hold one,
+    so this patch is how a test reaches the report of such a cut.
+    """
+
+    def select(target, start, end):
+        return extract_evidence(target, start, min(end, start + lines - 1))
+
+    return patch("explainer.plan.expand.extract_evidence", side_effect=select)

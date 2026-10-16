@@ -38,7 +38,7 @@ from explainer.plan.emit import (
     validate_output_location,
     write_storyboard,
 )
-from explainer.plan.expand import ExpandError, expand
+from explainer.plan.expand import DroppedBeat, ExpandError, expand
 from explainer.plan.ingest import IngestError, build_factsheet
 from explainer.plan.plan_ir import PlanError
 from explainer.plan.prompt import build_user_prompt
@@ -162,6 +162,11 @@ def _draft_plan(client, factsheet, max_repairs):
     return draft_plan_ir(client, factsheet, build_user_prompt(factsheet), max_repairs)
 
 
+def _beats_dropped(dropped):
+    """How many beats an expansion dropped; a cite it only trimmed drops no beat."""
+    return len([drop for drop in dropped if isinstance(drop, DroppedBeat)])
+
+
 def _plan(args):
     # Argument validation first and free: catch a nonsensical --max-repairs
     # or --beats before doing any work at all, same reasoning as the
@@ -280,7 +285,7 @@ def _plan(args):
             print(f"error: {exc}", file=sys.stderr)
             return 6
 
-    if plan is not original_plan and dropped:
+    if plan is not original_plan and _beats_dropped(dropped):
         # Never-worse, at beat granularity: a revision that loses more beats
         # to weak evidence than the validated draft did is a regression, not
         # a revision. expand() is pure, so re-expanding the draft costs only
@@ -290,16 +295,18 @@ def _plan(args):
         except ExpandError:
             pass  # the draft cannot expand at all; the revision's result stands
         else:
-            if len(dropped) > len(original_dropped):
+            lost, original_lost = _beats_dropped(dropped), _beats_dropped(original_dropped)
+            if lost > original_lost:
                 print(
-                    f"note: the revision dropped {len(dropped)} beat(s) where the "
-                    f"draft dropped {len(original_dropped)}; keeping the draft's expansion",
+                    f"note: the revision dropped {lost} beat(s) where the "
+                    f"draft dropped {original_lost}; keeping the draft's expansion",
                     file=sys.stderr,
                 )
                 document, dropped = original_document, original_dropped
 
+    # Printed only now, so only the expansion that ships is reported, once.
     for drop in dropped:
-        print(f"dropped beat {drop.beat_id!r}: {drop.reason}", file=sys.stderr)
+        print(drop, file=sys.stderr)
 
     try:
         written = write_storyboard(document, args.output)

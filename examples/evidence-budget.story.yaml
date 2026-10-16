@@ -86,7 +86,7 @@ beats:
     code_callout:
       display: "if found < MIN_TOKENS or strong == 0: raise WeakCiteError"
       language: python
-      cite: "explainer/plan/evidence.py:312-313"
+      cite: "explainer/plan/evidence.py:362-363"
       evidence: ["len(chosen) < MIN_TOKENS", "strong_count < 1", "WeakCiteError"]
       regions:
         - { lines: [1], emphasis: normal, narration: "Fewer than two tokens, or none of them strong, and the planner drops the whole beat instead of shipping it." }
