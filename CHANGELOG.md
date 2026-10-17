@@ -14,6 +14,7 @@ All notable changes to this project are listed here. The format follows
   - `pip install -e ".[explainer]"` adds manim and manim-voiceover so you can run `explainer render`. It
     needs the cairo system libraries (and LaTeX); the README lists the apt and brew packages.
   - `pip install ".[gui]"` installs the PyQt5 desktop app and manim.
+  - `pip install -e ".[planner]"` adds the Anthropic SDK for `explainer plan`, which drafts a storyboard from real code. It is not part of `.[explainer]`, so `verify` and `render` stay light.
   - `pip install -r requirements.txt` still installs the same packages as before.
 
 ### Changed: the citation gate is stricter
@@ -31,7 +32,7 @@ used to let a "verified" badge stand on evidence that didn't prove anything.
 
 ### Changed: errors and exit codes
 
-The exit codes are 0 ok, 2 validation error, 3 citation miss, 4 render failure.
+The exit codes are 0 ok, 2 validation error, 3 citation miss, 4 render failure, 5 planner LLM failure, and 6 when the planner produced nothing usable (5 and 6 come only from `explainer plan`).
 
 - `explainer verify` now also runs code generation, so a storyboard that passes the gate but can't
   become a scene fails at verify. Code-generation errors print one `error:` line and exit 2 in
