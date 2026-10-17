@@ -27,7 +27,7 @@ jobs:
       - name: Install the full stack (manim + PyQt5 + numpy)
         run: |
           python -m pip install --upgrade pip
-          python -m pip install .
+          python -m pip install ".[gui]"
 
       # With manim + ffmpeg + PyQt5 present, every gate opens: Tier A pipeline,
       # Tier C GUI, and Tier B real-render smoke all run for real.

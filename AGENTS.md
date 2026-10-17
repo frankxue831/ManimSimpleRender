@@ -78,7 +78,7 @@ Fast CI (`.github/workflows/ci.yml`) runs these on py3.12 + py3.13 without manim
 
 ### Explainer CLI
 ```bash
-pip install -e ".[explainer]"   # PyYAML + manim-voiceover; add [planner] for the LLM planner
+pip install -e ".[verify]"      # verify only (PyYAML); ".[explainer]" adds manim + manim-voiceover for render; add [planner] for the LLM planner
 explainer verify <storyboard>                    # citation gate, then a codegen check (no render, no TTS)
 explainer render <storyboard> -o out.mp4         # verify + deterministic codegen + narrated mp4 (--quality ql..qk)
 explainer plan --repo R --focus PATH:START-END --topic "..." -o sb.yaml   # LLM-drafted storyboard (needs [planner]; provider grok|anthropic)

@@ -1,5 +1,5 @@
 # Runtime install. The dependency versions are declared ONCE in pyproject.toml
-# ([project.dependencies]); this file just installs the package (editable) plus
+# ([project.optional-dependencies].gui); this file just installs the package (editable) plus
 # those pinned deps, so there is a single source of truth and no drift.
-# Equivalent to: pip install -e .
--e .
+# Equivalent to: pip install -e ".[gui]" (the desktop GUI + manim)
+-e .[gui]
