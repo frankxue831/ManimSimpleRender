@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "manim-simple-render"
-version = "0.1.0"
+version = "0.2.0"
 description = "Explainer Engine (source-citing storyboard YAML to narrated Manim video) and a PyQt5 GUI for batch-rendering Manim scenes."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
