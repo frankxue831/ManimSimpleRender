@@ -15,6 +15,7 @@ from explainer.cite.verifier import CiteFailure
 from explainer.render.adapter import (
     CitationGateError,
     REPO_ROOT,
+    RenderError,
     render_storyboard,
     resolution_to_quality,
 )
@@ -81,6 +82,7 @@ class AdapterOrchestrationTests(unittest.TestCase):
         # gate fired before the runner was built AND before PYTHONPATH was touched
         self.assertEqual(os.environ.get("PYTHONPATH"), prev)
 
+    @patch("explainer.render.adapter.manim_available", return_value=True)
     @patch("explainer.render.adapter.shutil.copyfile")
     @patch("explainer.render.adapter.glob.glob", return_value=["/tmp/x/ExplainerVideo.mp4"])
     @patch("explainer.render.adapter.RenderRunner", _FakeRunner)
@@ -99,6 +101,7 @@ class AdapterOrchestrationTests(unittest.TestCase):
             else:
                 os.environ.pop("PYTHONPATH", None)
 
+    @patch("explainer.render.adapter.manim_available", return_value=True)
     @patch("explainer.render.adapter.shutil.copyfile")
     @patch("explainer.render.adapter.glob.glob", return_value=["/tmp/x/ExplainerVideo.mp4"])
     @patch("explainer.render.adapter.RenderRunner", _FakeRunner)
@@ -119,15 +122,33 @@ class AdapterOrchestrationTests(unittest.TestCase):
             )
             self.assertEqual(_FakeRunner.last["env"]["ADAPTER_SENTINEL"], "preserve-me")
 
+    @patch("explainer.render.adapter.manim_available", return_value=True)
     @patch("explainer.render.adapter.shutil.rmtree")
     @patch("explainer.render.adapter.RenderRunner", _RaisingRunner)
     @patch("explainer.render.adapter.verify_storyboard", return_value=[])
-    def test_workdir_cleaned_on_unexpected_error(self, _mock_verify, mock_rmtree):
+    def test_workdir_cleaned_on_unexpected_error(self, _mock_verify, _mock_available, mock_rmtree):
         # ARCH-08: an unexpected error mid-render must clean the temp workdir
         # (RenderError still keeps it for debugging; this is a non-RenderError path).
         with self.assertRaises(RuntimeError):
             render_storyboard(EXAMPLE, "/tmp/out_arch08.mp4")
         self.assertTrue(mock_rmtree.called)
+
+    @patch("explainer.render.adapter.tempfile.mkdtemp")
+    @patch("explainer.render.adapter.manim_available", return_value=False)
+    @patch("explainer.render.adapter.RenderRunner", _ExplodingRunner)
+    @patch("explainer.render.adapter.verify_storyboard", return_value=[])
+    def test_missing_manim_is_reported_before_any_render(
+        self, _mock_verify, _mock_available, mock_mkdtemp
+    ):
+        # The light ``.[verify]`` install has no manim. Say so, with the install
+        # command, instead of spawning ``python -m manim`` to fail on import and
+        # leaving a "generated scene kept at ..." workdir behind.
+        with self.assertRaises(RenderError) as ctx:
+            render_storyboard(EXAMPLE, "/tmp/should_not_render_without_manim.mp4")
+        self.assertEqual(ctx.exception.outcome, "manim_not_installed")
+        self.assertIsNone(ctx.exception.workdir)
+        self.assertIn('pip install -e ".[explainer]"', str(ctx.exception))
+        self.assertFalse(mock_mkdtemp.called)
 
 
 if __name__ == "__main__":

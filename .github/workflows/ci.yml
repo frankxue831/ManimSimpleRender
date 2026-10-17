@@ -64,6 +64,43 @@ jobs:
       - name: Tier A e2e (no PyQt5, no manim -- Qt/manim cases skip)
         run: python -m unittest discover -s tests/e2e -t .
 
+  # The README quick start, as written, on a clean runner: the light `.[verify]`
+  # install (PyYAML only -- must not need cairo headers), `explainer verify`, then
+  # the documented apt prerequisites + the full `.[explainer]` install (no render:
+  # that needs network TTS and is covered nightly).
+  readme-quickstart:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Light install + verify (README quick start)
+        run: |
+          python -m venv .venv && source .venv/bin/activate
+          pip install -e ".[verify]"
+          python -c "import importlib.util as u; assert u.find_spec('manim') is None, 'verify extra pulled manim'"
+          explainer verify examples/evidence-budget.story.yaml
+          explainer verify examples/citation-gate.story.yaml
+
+      - name: Render prerequisites (README apt line)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config python3-dev libcairo2-dev libpango1.0-dev ffmpeg texlive texlive-latex-extra
+
+      - name: Full explainer install (README quick start, no render)
+        run: |
+          source .venv/bin/activate
+          pip install -e ".[explainer]"
+          python -c "import manim, manim_voiceover; print('manim', manim.__version__)"
+          explainer verify examples/evidence-budget.story.yaml
+
   test-windows-render-supervision:
     runs-on: windows-latest
     steps:

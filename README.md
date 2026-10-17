@@ -1,64 +1,84 @@
 # ManimSimpleRender
 
-Home of the **Explainer Engine**: turn a short storyboard YAML that cites real source lines into a
-narrated, animated Manim video. Before anything is rendered, a citation gate checks that the
-cited source lines still contain the evidence the storyboard declares for them (as whole words,
-with some on the first and the last cited line), and stops the render if any do not. The gate
-checks citations, not narration. The repo also contains a PyQt5 GUI for batch-rendering Manim
-scenes (see [Desktop GUI](#desktop-gui) below).
+**Explainer Engine**: turns a short storyboard YAML that cites real source lines into a narrated,
+animated Manim video, and refuses to render if a citation no longer matches the code.
+
+Before anything is rendered, a citation gate checks that the cited source lines still contain the
+evidence the storyboard declares for them (as whole words, with some on the first and the last
+cited line), and stops the render if any do not. The gate checks citations, not narration.
 
 ![Animated plot: a green token budget starts at a floor of 5, rises with lines cited, and levels off at 24, above a simplified two-line version of the code that computes it](assets/evidence-budget.gif)
 
-*A clip from `examples/evidence-budget.story.yaml`, rendered by the Explainer Engine. Full video
-and write-up: <https://frankxue.dev/projects/explainer-engine/>.*
+*A clip from `examples/evidence-budget.story.yaml`, rendered by the Explainer Engine.*
+
+## Examples
+
+Full videos and write-up: <https://www.frankxue.dev/projects/explainer-engine/>.
+
+- **Evidence budget** ([video](https://www.frankxue.dev/projects/explainer-engine/#budget-video)):
+  storyboard [`examples/evidence-budget.story.yaml`](examples/evidence-budget.story.yaml), which
+  cites this repo's own `explainer/plan/evidence.py`.
+- **Citation gate** ([video](https://www.frankxue.dev/projects/explainer-engine/#gate-video)):
+  storyboard [`examples/citation-gate.story.yaml`](examples/citation-gate.story.yaml), which
+  explains the gate itself by citing `explainer/cite/verifier.py`.
+- **Harness-Field** ([video](https://www.frankxue.dev/projects/explainer-engine/#harness-video)):
+  its storyboard is not public and is not in this repository.
 
 ## Quick start
+
+Check a storyboard's citations (light install: PyYAML only, no manim, no system libraries):
 
 ```bash
 git clone https://github.com/frankxue831/ManimSimpleRender.git
 cd ManimSimpleRender
 python3.12 -m venv .venv && source .venv/bin/activate   # Python 3.12 or 3.13
-pip install -e ".[explainer]"
+pip install -e ".[verify]"
 explainer verify examples/evidence-budget.story.yaml
-explainer render examples/evidence-budget.story.yaml -o out.mp4
 ```
 
 `verify` runs the citation gate, then checks that the code generator accepts the storyboard; it
-only reads files, does not render or call TTS, and needs no network. `render` additionally needs:
+only reads files, does not render or call TTS, and needs no network.
 
-- **Manim's system prerequisites** (ffmpeg, LaTeX, cairo/pango), which `pip` does not install;
-  see [Requirements](#requirements).
-- **Network access for narration.** The only supported voice is `gtts` (manim-voiceover's
-  Google Text-to-Speech service, a live Google endpoint). No API key or credential is needed,
-  and there is no offline TTS fallback: synthesis is retried with backoff, then the render fails.
-  Audio is cached by narration text, one folder per language, under
-  `~/.cache/explainer/voiceovers` (override with `EXPLAINER_TTS_CACHE`), so a re-render of
-  unchanged narration reuses the cache.
+To render video, first install Manim's system prerequisites (cairo/pango headers, ffmpeg, and
+LaTeX), which `pip` does not install. Without the cairo headers, `pip install` fails while
+building `pycairo`.
 
-**Reproducibility.** `examples/evidence-budget.story.yaml` is the storyboard behind the video
-above. The storyboard for the harness-field explainer on the project page is not public and is
-not in this repository.
+```bash
+# Debian/Ubuntu
+sudo apt-get install -y build-essential pkg-config python3-dev libcairo2-dev libpango1.0-dev ffmpeg texlive texlive-latex-extra
+# macOS (Homebrew)
+brew install pkg-config cairo pango ffmpeg
+brew install --cask mactex-no-gui
+```
+
+Then, in the same venv:
+
+```bash
+pip install -e ".[explainer]"
+explainer render examples/evidence-budget.story.yaml -o out.mp4
+```
+
+See the [Manim installation guide](https://docs.manim.community/en/stable/installation.html) for
+other platforms. `render` also needs **network access for narration.** The only supported voice
+is `gtts` (manim-voiceover's Google Text-to-Speech service, a live Google endpoint). No API key or
+credential is needed, and there is no offline TTS fallback: synthesis is retried with backoff,
+then the render fails. Audio is cached by narration text, one folder per language, under
+`~/.cache/explainer/voiceovers` (override with `EXPLAINER_TTS_CACHE`), so a re-render of
+unchanged narration reuses the cache.
 
 ## Explainer and concept-render tools
 
-These are separate command-line tools in the same repo. They need the Manim system
-prerequisites (see [Requirements](#requirements)) for any step that renders video.
+These are separate command-line tools in the same repo. Any step that renders video needs the
+Manim system prerequisites listed in the [Quick start](#quick-start).
 
 ### Explainer (`explainer/`)
 
-Install with `pip install -e ".[explainer]"` (adds PyYAML and manim-voiceover). This installs
-the `explainer` command (equivalent: `python -m explainer.cli`). It shares the Qt-free render
-core with the GUI; see `docs/adr/0001-render-core-boundary.md` for that boundary.
+The `explainer` command (equivalent: `python -m explainer.cli`) has `verify` and `render` (see
+[Quick start](#quick-start); `render` takes `--quality ql|qm|qh|qp|qk|1080p`) and `plan`, which
+drafts a storyboard from real code with an LLM. It shares the Qt-free render core with the GUI;
+see `docs/adr/0001-render-core-boundary.md` for that boundary.
 
 ```bash
-# Check a storyboard's citations against the source repo it cites, then generate its
-# Manim scene code (no render, no TTS)
-explainer verify examples/evidence-budget.story.yaml
-
-# Generate, verify, and render a storyboard to an mp4
-explainer render examples/evidence-budget.story.yaml -o out.mp4 [--quality ql|qm|qh|qp|qk|1080p]
-
-# Draft a storyboard from real code with an LLM
 explainer plan --repo . --focus PATH[:START-END] --topic "what to explain" -o draft.story.yaml \
   [--provider grok|anthropic] [--beats 4] [--revisions 1] [--dry-run]
 ```
@@ -88,7 +108,7 @@ python -m concept_render.revision --original original.json --candidate candidate
 
 `--timeout` is in seconds, defaults to 60, and must be greater than 0 and at most 120.
 
-## Desktop GUI
+## Also in this repo: desktop GUI
 
 A PyQt5 desktop GUI for discovering and batch-rendering [Manim](https://www.manim.community/)
 scenes. Point it at a folder of Manim scripts, pick the scenes you want, choose a resolution
@@ -109,9 +129,8 @@ per-scene results.
 
 - **Python 3.12 or 3.13** (both install numpy 2.x)
 - **Manim 0.20.1** and its **system prerequisites**, which `pip` does *not* install:
-  **ffmpeg**, a **LaTeX** distribution, and **cairo/pango**. See the
-  [Manim installation guide](https://docs.manim.community/en/stable/installation.html) for
-  per-OS instructions. (Without these, `pip install` succeeds but renders fail at runtime.)
+  **ffmpeg**, a **LaTeX** distribution, and **cairo/pango** (see the apt/brew lines in the
+  [Quick start](#quick-start)).
 
 > Tip: click **Check Environment** in the app to verify that manim, ffmpeg, and LaTeX are
 > detected in the interpreter that will run the render, before you start a batch.
@@ -123,14 +142,14 @@ per-scene results.
 python -m venv .venv
 source .venv/bin/activate           # Windows: .venv\Scripts\activate
 
-# Install runtime dependencies
+# Install the GUI + manim (same as: pip install -e ".[gui]")
 pip install -r requirements.txt
 ```
 
 Alternatively, install the package itself to get the `manim-simple-render` launch command:
 
 ```bash
-pip install .
+pip install ".[gui]"
 ```
 
 ### Usage
