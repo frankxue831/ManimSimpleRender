@@ -9,10 +9,11 @@ time, so the manim subprocess is given ``PYTHONPATH`` = repo root.
 import glob
 import os
 import shutil
+import sys
 import tempfile
 
 from app.render.aggregation import JobOutcome
-from app.render.command_builder import build_command
+from app.render.command_builder import build_command, manim_available
 from app.render.jobs import RenderJob
 from app.render.quality import quality_flag_for_height
 from app.render.runner import RenderRunner
@@ -48,12 +49,16 @@ class CitationGateError(Exception):
 
 
 class RenderError(Exception):
-    """Raised when the manim render does not produce a video."""
+    """Raised when the manim render cannot run, or does not produce a video."""
 
-    def __init__(self, outcome, workdir):
+    def __init__(self, outcome, workdir=None, detail=""):
         self.outcome = outcome
         self.workdir = workdir
-        super().__init__(f"render failed ({outcome}); generated scene kept at {workdir}")
+        if workdir is None:
+            message = f"render failed ({outcome}): {detail}"
+        else:
+            message = f"render failed ({outcome}); generated scene kept at {workdir}"
+        super().__init__(message)
 
 
 def render_storyboard(storyboard_path, out_path, quality=None, lang="en", on_log=None):
@@ -62,8 +67,8 @@ def render_storyboard(storyboard_path, out_path, quality=None, lang="en", on_log
     ``quality`` is a manim flag (``-ql/-qm/-qh/-qp/-qk``); when ``None`` it is derived
     from the storyboard's ``theme.resolution`` (so a ``1080p30`` theme renders at
     ``-qh`` by default). Raises :class:`CitationGateError` if any cite fails, or
-    :class:`RenderError` if the render produces no video (the generated scene is
-    kept for debugging).
+    :class:`RenderError` if manim is not installed (nothing is written) or the
+    render produces no video (the generated scene is kept for debugging).
     """
     on_log = on_log or (lambda line: None)
     storyboard = load_storyboard(storyboard_path)
@@ -75,6 +80,17 @@ def render_storyboard(storyboard_path, out_path, quality=None, lang="en", on_log
         raise CitationGateError(failures)
 
     source = generate_scene(storyboard, scene_name=SCENE_NAME, lang=lang)
+
+    # The light ``.[verify]`` install has no manim: ``python -m manim`` would fail
+    # on import and leave a "generated scene kept at" workdir behind. Say what is
+    # missing and how to get it, before anything is written.
+    if not manim_available():
+        raise RenderError(
+            "manim_not_installed",
+            detail=f"manim is not importable from {sys.executable}; install the "
+            f'render stack with: pip install -e ".[explainer]" (see README, Quick start)',
+        )
+
     workdir = tempfile.mkdtemp(prefix="explainer_")
     try:
         scene_file = os.path.join(workdir, "explainer_scene.py")

@@ -141,7 +141,7 @@ beats:
             raise CitationGateError(failures)
         source = generate_scene(storyboard, ...)
       language: python
-      cite: "explainer/render/adapter.py:73-77"
+      cite: "explainer/render/adapter.py:78-82"
       evidence:
         - "failures = verify_storyboard(storyboard) if failures: raise CitationGateError(failures)"
         - "raise CitationGateError(failures) source = generate_scene(storyboard, scene_name=SCENE_NAME, lang=lang)"

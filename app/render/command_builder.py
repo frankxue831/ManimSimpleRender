@@ -14,6 +14,7 @@ The full argv is the base + ``[<file>, <scene>, <resolution_flag>, '--media_dir'
 ``""`` sentinel for the default cairo engine suppresses the trailing token).
 """
 
+import importlib.util
 import shlex
 import shutil
 import subprocess
@@ -47,6 +48,32 @@ def manim_base_command(frozen=None, which=shutil.which):
         path = which("manim")
         return [path] if path else ["manim"]  # bare name -> runner maps MANIM_NOT_FOUND
     return [sys.executable, "-m", "manim"]
+
+
+def manim_available(find_spec=importlib.util.find_spec, frozen=None, which=shutil.which):
+    """Return True if the argv from :func:`manim_base_command` will resolve.
+
+    - Normal: probe the current interpreter (``find_spec``), since the render runs
+      ``[sys.executable, '-m', 'manim', ...]``.
+    - Frozen app (``sys.frozen``): the render uses an EXTERNAL manim, so probe
+      PATH (``which``) instead of the bundled interpreter's importable set.
+
+    Both front-ends call this before spawning anything: the GUI (through
+    ``app.validation``) to show a status line, the explainer to turn the light
+    ``.[verify]`` install's missing manim into an install hint instead of a
+    failed subprocess. The runner still maps a late FileNotFoundError to
+    MANIM_NOT_FOUND as a backstop. ``find_spec``/``frozen``/``which`` are
+    injectable for testing; a raised ImportError/ValueError is treated as
+    "not available".
+    """
+    if frozen is None:
+        frozen = getattr(sys, "frozen", False)
+    if frozen:
+        return which("manim") is not None
+    try:
+        return find_spec("manim") is not None
+    except (ImportError, ValueError):
+        return False
 
 
 def build_command(job, resolution_flag, output_dir, engine_renderer_flag="", base_command=None):

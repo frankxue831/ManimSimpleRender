@@ -38,6 +38,9 @@ explainer = [
     "manim-voiceover[gtts]==0.4.0",
 ]
 # The PyQt5 desktop GUI (manim-simple-render) renders through the manim CLI.
+# The manim + numpy pins repeat the ones in `explainer` on purpose: keep the two
+# lists in step (a self-referencing extra would make the install depend on how
+# each pip version resolves it).
 gui = ["PyQt5==5.15.11", "manim==0.20.1", "numpy>=2.1,<3"]
 # The LLM planner (explainer/plan/) drafts a storyboard from real code. Kept
 # out of the `explainer` extra so `verify` and `render` stay dependency-free;
