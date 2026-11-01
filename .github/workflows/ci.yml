@@ -34,10 +34,10 @@ jobs:
           python -m pip install PyQt5==5.15.11 "PyYAML>=6" black==26.5.1 flake8==7.3.0
 
       - name: black --check
-        run: black --check app explainer tests main.py
+        run: black --check app explainer scene_production tests main.py examples/scenes/netty_eventloop.py examples/scenes/tcp_stream.py examples/scenes/scene_font.py
 
       - name: flake8
-        run: flake8 app explainer tests main.py
+        run: flake8 app explainer scene_production tests main.py examples/scenes/netty_eventloop.py examples/scenes/tcp_stream.py examples/scenes/scene_font.py
 
       - name: Unit tests (headless)
         env:

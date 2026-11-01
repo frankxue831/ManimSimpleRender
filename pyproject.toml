@@ -53,9 +53,10 @@ manim-simple-render = "app.bootstrap:main"
 
 [project.scripts]
 explainer = "explainer.cli:main"
+scene-production = "scene_production.__main__:main"
 
 [tool.setuptools.packages.find]
-include = ["app*", "explainer*"]
+include = ["app*", "explainer*", "scene_production*"]
 namespaces = false
 
 [tool.setuptools.package-data]

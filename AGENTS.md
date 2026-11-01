@@ -6,7 +6,7 @@ This file provides guidance to coding agents (Codex, Claude Code, and others) wo
 
 ManimSimpleRender holds two products. The Explainer Engine (`explainer/`) is a CLI that compiles storyboard YAML through a citation gate into deterministic Manim codegen and a narrated video. The desktop GUI (`app/`) is a PyQt5 application that discovers the Manim scenes in a folder of Python files and batch-renders the ones the user selects.
 
-The two verticals share one Qt-free render core (`app/render`), per `docs/adr/0001-render-core-boundary.md`. `explainer/` may import only `app.render.*` (never `app.render.worker`); nothing imports back from it. The boundary is enforced by `tests/test_architecture.py`. `concept_render/`, a smaller source-checkout-only CLI for silent concept drafts (`docs/concept-render.md`), also imports `app.render`; `tests/test_architecture.py` does not scan it.
+The two verticals share one Qt-free render core (`app/render`), per `docs/adr/0001-render-core-boundary.md`. `explainer/` may import only `app.render.*` (never `app.render.worker`); nothing imports back from it. The boundary is enforced by `tests/test_architecture.py`. `concept_render/`, a smaller source-checkout-only CLI for silent concept drafts (`docs/concept-render.md`), also imports `app.render`; `tests/test_architecture.py` does not scan it. `scene_production/` renders trusted ordinary scenes and checks media; its Qt-free imports are guarded by the same test file.
 
 ## Architecture
 
@@ -71,8 +71,8 @@ manim input_file.py SceneName -qh --media_dir output_folder
 ### Tests, Formatting, Lint
 ```bash
 QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests
-black --check app explainer tests main.py
-flake8 app explainer tests main.py
+black --check app explainer scene_production tests main.py
+flake8 app explainer scene_production tests main.py
 ```
 Fast CI (`.github/workflows/ci.yml`) runs these on py3.12 + py3.13 without manim installed (services are Qt-free-testable; explainer tests skip their one manim-touching check). The nightly workflow installs the full render toolchain and runs the real-render e2e smoke.
 

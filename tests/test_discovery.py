@@ -176,12 +176,14 @@ class DiscoverRealTreeTests(unittest.TestCase):
                 "TestDebuggingWorkflow",
                 "TestDebuggingWorkflowDetailed",
                 "TestDebuggingWorkflowImproved",
+                "NettyPuzzleComparison",
+                "TCPStream",
             },
         )
 
-    def test_seven_entries_total(self):
-        # TestDebuggingWorkflowDetailed appears in two files -> 7 entries, 6 unique names.
-        self.assertEqual(len(self.scenes), 7)
+    def test_nine_entries_total(self):
+        # TestDebuggingWorkflowDetailed appears in two files -> 9 entries, 8 unique names.
+        self.assertEqual(len(self.scenes), 9)
 
     def test_abstract_base_excluded(self):
         # ProxyScenarioBase resolves to Scene but defines no construct() -> excluded.

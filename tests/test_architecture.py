@@ -148,3 +148,25 @@ class RenderCoreBoundaryTests(unittest.TestCase):
             return _is_or_under(mod, "explainer.codegen") or _is_or_under(mod, "explainer.cite")
 
         self._check(_py_files("explainer", "storyboard"), predicate)
+
+
+class SceneProductionBoundaryTests(unittest.TestCase):
+    def test_scene_production_is_qt_free_and_uses_render_services(self):
+        files = _py_files("scene_production")
+        self.assertTrue(files)
+        bad = []
+        for path in files:
+            rel = os.path.relpath(path, REPO_ROOT)
+            for mod in _imported_modules(path, rel):
+                if (
+                    any(_is_or_under(mod, qt) for qt in QT_PACKAGES)
+                    or (
+                        _is_or_under(mod, "app")
+                        and not _is_or_under(mod, "app.render")
+                        and not _is_or_under(mod, "app.scenes.discovery")
+                    )
+                    or _is_or_under(mod, "app.render.worker")
+                    or _is_or_under(mod, "explainer")
+                ):
+                    bad.append(rel + " imports " + mod)
+        self.assertEqual(bad, [])

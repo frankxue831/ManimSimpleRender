@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "segments": [
+    {
+      "label": "two_writes",
+      "start": 0,
+      "end": 16,
+      "samples": [
+        4,
+        8,
+        12
+      ]
+    },
+    {
+      "label": "read_boundaries",
+      "start": 16,
+      "end": 41,
+      "samples": [
+        20,
+        28,
+        31,
+        34,
+        38
+      ]
+    },
+    {
+      "label": "framing",
+      "start": 41,
+      "end": 50,
+      "samples": [
+        46
+      ]
+    },
+    {
+      "label": "partial_header_body",
+      "start": 50,
+      "end": 69,
+      "samples": [
+        54,
+        60,
+        66
+      ]
+    },
+    {
+      "label": "extract_keep_remainder",
+      "start": 69,
+      "end": 86,
+      "samples": [
+        73,
+        77,
+        82
+      ]
+    },
+    {
+      "label": "complete_second",
+      "start": 86,
+      "end": 99,
+      "samples": [
+        89,
+        95
+      ]
+    },
+    {
+      "label": "limits",
+      "start": 99,
+      "end": 108,
+      "samples": [
+        104
+      ]
+    }
+  ]
+}
