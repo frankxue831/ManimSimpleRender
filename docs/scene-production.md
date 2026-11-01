@@ -41,3 +41,20 @@ is recorded before checking it; a failed media check never becomes success.
 Only trusted Python should be rendered: this is not a sandbox. Source bytes are
 compared before and after rendering; transient changes cannot be ruled out.
 Imports, fonts, external assets and the environment are not fully snapshotted.
+
+## Reinspect an unchanged recorded video
+
+```sh
+scene-production inspect --from-run output/scene-RUN/result.json --timeline corrected.json --output-dir rechecked
+```
+
+This does not execute today's Scene or invoke Manim. It accepts an original
+canonical render receipt, verifies retained source/timeline/video identities and
+root boundaries, copies the video and source snapshot into a fresh run, and uses
+the same full decoder and sequential PNG checker. It never changes the old run.
+Use it to correct inspection times or repeat a media check. Changes to picture,
+text, logic or narration require rendering again. Reinspection chains are rejected.
+Old failed receipts without a recorded completed-video identity are rejected;
+current hashes cannot reconstruct historical identity. Hashes detect changed
+bytes but do not authenticate unsigned receipts. API:
+`scene_production.reinspection.reinspect(from_run, timeline, output_dir)`.
