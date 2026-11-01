@@ -225,3 +225,25 @@ class RevisionTests(unittest.TestCase):
         self.assertIn("b=2", self.source.read_text())
         rev.apply(plan, {"target": "b=3\n"})
         self.assertEqual(rev.digest(self.source), rev.digest(run / "source.py"))
+
+    def test_apply_rechecks_inputs_before_replacing_source(self):
+        base = self.baseline()
+        plan = rev.locate(base, "target", "change")
+        original = rev.tempfile.mkstemp
+
+        def concurrent(*args, **kwargs):
+            self.source.write_text(self.source.read_text().replace("a=1", "a=999"))
+            return original(*args, **kwargs)
+
+        with patch.object(rev.tempfile, "mkstemp", side_effect=concurrent):
+            with self.assertRaisesRegex(ValueError, "stale baseline"):
+                rev.apply(plan, {"target": "b=5\n"})
+        self.assertIn("a=999", self.source.read_text())
+
+    def test_source_marker_order_matches_manifest(self):
+        self.source.write_text(
+            "# scene:start target\nb=2\n# scene:end target\n"
+            "# scene:start intro\na=1\n# scene:end intro\n"
+        )
+        with self.assertRaisesRegex(ValueError, "order"):
+            rev.manifest(self.manifest)

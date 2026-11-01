@@ -62,6 +62,9 @@ def _origin(from_run):
     video = _verify_file(old.get("video"), root, old.get("video_sha256"))
     if video.stat().st_size <= 0:
         raise ValueError("completed video is empty")
+    if "frame_trace" in old:
+        entry = old["frame_trace"]
+        _verify_file(entry["path"], root, entry["sha256"])
     return path, hashlib.sha256(raw).hexdigest(), old, source, video
 
 
@@ -94,6 +97,13 @@ def reinspect(from_run, timeline, output_dir, tool_timeout=30):
         shutil.copyfile(source, run / "source.py")
         shutil.copyfile(old_video, receipt["video"])
         (run / "timeline.json").write_bytes(raw)
+        if "frame_trace" in old:
+            entry = old["frame_trace"]
+            trace_copy = run / "frame-trace.json"
+            shutil.copyfile(entry["path"], trace_copy)
+            _verify_file(entry["path"], origin.parent, entry["sha256"])
+            _verify_file(str(trace_copy), run, entry["sha256"])
+            receipt["frame_trace"] = {"path": str(trace_copy), "sha256": entry["sha256"]}
         for value, expected in (
             (str(origin), origin_sha),
             (str(origin.parent / "source.py"), old["source_sha256"]),

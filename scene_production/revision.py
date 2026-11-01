@@ -15,6 +15,8 @@ import re
 import shutil
 import subprocess
 import tempfile
+import io
+import tokenize
 
 from . import digest, load_timeline, pairs, _verify_file
 
@@ -22,7 +24,8 @@ MARKER = re.compile(r"^\s*# scene:(start|end) ([a-z][a-z0-9_-]*)\s*$")
 
 
 def read(path):
-    raw = Path(path).read_bytes()
+    with Path(path).open("rb") as handle:
+        raw = handle.read(2 * 1024 * 1024 + 1)
     if len(raw) > 2 * 1024 * 1024:
         raise ValueError("JSON input exceeds 2 MiB")
     return json.loads(raw, object_pairs_hook=pairs)
@@ -31,9 +34,18 @@ def read(path):
 def regions(source):
     lines = source.splitlines(keepends=True)
     found, opened = {}, None
+    try:
+        comments = {
+            token.start[0]
+            for token in tokenize.generate_tokens(io.StringIO(source).readline)
+            if token.type == tokenize.COMMENT
+            and not lines[token.start[0] - 1][: token.start[1]].strip()
+        }
+    except (tokenize.TokenError, IndentationError) as exc:
+        raise ValueError("invalid Python source markers") from exc
     offset = 0
     for lineno, line in enumerate(lines, 1):
-        match = MARKER.fullmatch(line.rstrip("\r\n"))
+        match = MARKER.fullmatch(line.rstrip("\r\n")) if lineno in comments else None
         if match:
             kind, name = match.groups()
             if kind == "start":
@@ -58,9 +70,52 @@ def local(root, value):
     return p
 
 
+def _manifest_schema(m):
+    def words(value):
+        return isinstance(value, list) and all(isinstance(v, str) and v.strip() for v in value)
+
+    if not isinstance(m, dict) or set(m) != {
+        "version",
+        "source",
+        "timeline",
+        "scene",
+        "dependencies",
+        "brief",
+        "segments",
+    }:
+        raise ValueError("invalid manifest fields")
+    if any(not isinstance(m[k], str) or not m[k] for k in ("source", "timeline", "scene")):
+        raise ValueError("source, timeline and Scene must be nonempty strings")
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", m["scene"]) is None:
+        raise ValueError("Scene must be an ASCII class identifier")
+    if not words(m["dependencies"]):
+        raise ValueError("dependencies must be a list of paths")
+    brief = m["brief"]
+    if (
+        not isinstance(brief, dict)
+        or set(brief) != {"audience", "goal", "sources", "pitfalls"}
+        or any(not isinstance(brief[k], str) or not brief[k].strip() for k in ("audience", "goal"))
+        or any(not words(brief[k]) or not brief[k] for k in ("sources", "pitfalls"))
+    ):
+        raise ValueError("invalid brief fields")
+    if not isinstance(m["segments"], list) or not 1 <= len(m["segments"]) <= 64:
+        raise ValueError("manifest requires 1 to 64 segments")
+    for segment in m["segments"]:
+        if (
+            not isinstance(segment, dict)
+            or set(segment) != {"id", "captions", "objects", "depends_on"}
+            or not isinstance(segment["id"], str)
+            or re.fullmatch(r"[a-z][a-z0-9_-]*", segment["id"]) is None
+            or len(segment["id"]) > 100
+            or any(not words(segment[k]) for k in ("captions", "objects", "depends_on"))
+        ):
+            raise ValueError("invalid segment fields")
+
+
 def manifest(path):
     path = Path(path).resolve()
     m = read(path)
+    _manifest_schema(m)
     if m.get("version") != 1 or type(m["version"]) is not int:
         raise ValueError("manifest version must be 1")
     root = path.parent
@@ -76,8 +131,8 @@ def manifest(path):
     if not ids or len(ids) != len(set(ids)):
         raise ValueError("duplicate or empty segment IDs")
     source = files["source"].read_bytes().decode("utf-8")
-    if set(ids) != set(regions(source)):
-        raise ValueError("manifest IDs disagree with source markers")
+    if ids != list(regions(source)):
+        raise ValueError("manifest IDs disagree with source marker order")
     timeline = load_timeline(files["timeline"].read_bytes())
     if ids != [s["label"] for s in timeline["segments"]]:
         raise ValueError("manifest IDs must match ordered timeline labels")
@@ -105,6 +160,26 @@ def recorded(path):
         (Path(d["video"]), d["video_sha256"]),
     ):
         _verify_file(str(p), root, sha)
+    if "frame_trace" in d:
+        trace = d["frame_trace"]
+        _verify_file(trace["path"], root, trace["sha256"])
+        from .frame_trace import read_trace
+
+        stream = next(v for v in d["probe"]["streams"] if v["codec_type"] == "video")
+        data = read_trace(trace["path"], d["source_sha256"], stream)
+        for frame in d.get("frames", []):
+            if "native_frame_index" not in frame and "native_time" not in frame:
+                continue
+            index = frame.get("native_frame_index")
+            try:
+                native_time = frame["native_time"]
+                valid_time = isinstance(native_time, str) and Fraction(native_time) == Fraction(
+                    index, Fraction(data["frame_rate"])
+                )
+            except (KeyError, ValueError, TypeError, ZeroDivisionError):
+                valid_time = False
+            if type(index) is not int or not 0 <= index < data["frame_count"] or not valid_time:
+                raise ValueError("invalid native preview frame metadata")
     return d
 
 
@@ -119,6 +194,10 @@ def rendered_scene(receipt):
 def capture(manifest_path, receipt_path, store):
     m, path, files, deps, timeline = manifest(manifest_path)
     r = recorded(receipt_path)
+    if "frame_trace" in r:
+        observed = _raw_trace(r)
+        if [v["id"] for v in observed["sections"]] != [v["id"] for v in m["segments"]]:
+            raise ValueError("observed native section IDs disagree with manifest order")
     if rendered_scene(r) != m["scene"]:
         raise ValueError("rendered Scene class disagrees with manifest")
     if (
@@ -190,7 +269,28 @@ def locate(snapshot, target, feedback, acknowledge=()):
     segment = next(s for s in m["segments"] if s["id"] == target)
     window = next(s for s in tl["segments"] if s["label"] == target)
     r = recorded(b["receipt"])
-    previews = [f for f in r.get("frames", []) if window["start"] < f["time"] < window["end"]]
+    actual_window = None
+    if "frame_trace" in r:
+        trace = _raw_trace(r)
+        section = next((v for v in trace["sections"] if v["id"] == target), None)
+        if section is None:
+            raise ValueError("target ID missing from observed native sections")
+        rate = Fraction(trace["frame_rate"])
+        actual_window = {
+            **section,
+            "start": float(Fraction(section["start_frame"], rate)),
+            "end": float(Fraction(section["end_frame"], rate)),
+        }
+    preview_window = actual_window or window
+    previews = [
+        f
+        for f in r.get("frames", [])
+        if (
+            actual_window["start_frame"] <= f["native_frame_index"] < actual_window["end_frame"]
+            if actual_window and "native_frame_index" in f
+            else preview_window["start"] < f["time"] < preview_window["end"]
+        )
+    ]
     affected = set()
     changed = {target}
     while True:
@@ -221,6 +321,7 @@ def locate(snapshot, target, feedback, acknowledge=()):
             "last_line": last,
             "code": source[start:end],
             "time": window,
+            "observed_window": actual_window,
             "previews": previews,
         },
         "notice": (
@@ -262,6 +363,10 @@ def apply(plan, edits):
     tmp = Path(name)
     try:
         tmp.write_bytes(updated.encode("utf-8"))
+        check_static(b)
+        for p in (b["source"], b["timeline"]):
+            if digest(p) != b["files"][p]["sha256"]:
+                raise ValueError("stale baseline: inputs changed before replacement")
         tmp.replace(target)
     finally:
         tmp.unlink(missing_ok=True)
@@ -347,7 +452,7 @@ def frame_sequence(video, start, end, fps, timeout=120):
     return hashes
 
 
-def verify(snapshot, candidate_receipt, targets):
+def _media_pair(snapshot, candidate_receipt, targets):
     b, path = check_scope(snapshot, targets)
     old = recorded(b["receipt"])
     new = recorded(candidate_receipt)
@@ -384,6 +489,11 @@ def verify(snapshot, candidate_receipt, targets):
 
     if geometry(old) != geometry(new):
         raise ValueError("video geometry changed")
+    return b, path, old, new, now, fps(old)
+
+
+def verify(snapshot, candidate_receipt, targets):
+    b, path, old, new, now, rate = _media_pair(snapshot, candidate_receipt, targets)
     evidence = []
     for a, z in zip(b["segments"], now):
         if a["label"] in targets:
@@ -392,8 +502,8 @@ def verify(snapshot, candidate_receipt, targets):
             str(z["end"])
         ) - Fraction(str(z["start"])):
             raise ValueError("non-target duration changed")
-        before = frame_sequence(old["video"], a["start"], a["end"], fps(old))
-        after = frame_sequence(new["video"], z["start"], z["end"], fps(new))
+        before = frame_sequence(old["video"], a["start"], a["end"], rate)
+        after = frame_sequence(new["video"], z["start"], z["end"], rate)
         if before != after:
             raise ValueError("non-target media changed: " + a["label"])
         evidence.append(
@@ -407,6 +517,9 @@ def verify(snapshot, candidate_receipt, targets):
                 ).hexdigest(),
             }
         )
+    final = _media_pair(snapshot, candidate_receipt, targets)
+    if final != (b, path, old, new, now, rate):
+        raise ValueError("comparison inputs changed during decoding")
     return {
         "scope": targets,
         "baseline": str(path),
@@ -419,6 +532,131 @@ def verify(snapshot, candidate_receipt, targets):
         "notice": (
             "All decoded non-target RGB frames equal at mapped scene intervals. "
             "No semantic quality or user-understanding judgement."
+        ),
+    }
+
+
+def _raw_trace(receipt):
+    if "frame_trace" not in receipt:
+        raise ValueError("layered audit requires raw traces in both original renders")
+    from .frame_trace import read_trace
+
+    entry = receipt["frame_trace"]
+    root = Path(receipt["run_dir"]).resolve()
+    _verify_file(entry["path"], root, entry["sha256"])
+    stream = next(s for s in receipt["probe"]["streams"] if s["codec_type"] == "video")
+    return read_trace(entry["path"], receipt["source_sha256"], stream)
+
+
+def _inspection_alignment(segments, trace):
+    rate = Fraction(trace["frame_rate"])
+    result = []
+    for declared, actual in zip(segments, trace["sections"]):
+        from .frame_clock import frame_coordinate
+
+        coordinates = [frame_coordinate(declared[k], rate) for k in ("start", "end")]
+        bounds, rounded, errors, limits = map(list, zip(*coordinates))
+        observed = [actual["start_frame"], actual["end_frame"]]
+        representable = all(error <= limit for error, limit in zip(errors, limits))
+        result.append(
+            {
+                "id": actual["id"],
+                "declared_frames": [str(v) for v in bounds],
+                "observed_frames": observed,
+                "nearest_declared_frames": rounded,
+                "representation_error_frames": [str(v) for v in errors],
+                "representation_limit_frames": [str(v) for v in limits],
+                "equal": representable and rounded == observed,
+            }
+        )
+    return result
+
+
+def audit(snapshot, candidate_receipt, targets):
+    """Keep exact source/raw/timing/decoded layers separate, never infer meaning."""
+    b, path, old, new, now, rate = _media_pair(snapshot, candidate_receipt, targets)
+    before = _raw_trace(old)
+    after = _raw_trace(new)
+    ids = [s["label"] for s in b["segments"]]
+    if any([s["id"] for s in t["sections"]] != ids for t in (before, after)):
+        raise ValueError("observed native section IDs disagree with manifest order")
+    if before["geometry"] != after["geometry"] or Fraction(before["frame_rate"]) != Fraction(
+        after["frame_rate"]
+    ):
+        raise ValueError("raw trace geometry or frame rate changed")
+    sections = []
+    for a, z in zip(before["sections"], after["sections"]):
+        if a["id"] in targets:
+            continue
+        old_frames = before["frames"][a["start_frame"] : a["end_frame"]]
+        new_frames = after["frames"][z["start_frame"] : z["end_frame"]]
+        timing_equal = len(old_frames) == len(new_frames)
+        raw_equal = old_frames == new_frames
+        decoded_old = frame_sequence(
+            old["video"], Fraction(a["start_frame"], rate), Fraction(a["end_frame"], rate), rate
+        )
+        decoded_new = frame_sequence(
+            new["video"], Fraction(z["start_frame"], rate), Fraction(z["end_frame"], rate), rate
+        )
+        decoded_equal = decoded_old == decoded_new
+        if not timing_equal:
+            classification = "timing_changed"
+        elif not raw_equal:
+            classification = "render_output_changed"
+        elif not decoded_equal:
+            classification = "encoded_output_changed"
+        else:
+            classification = "unchanged"
+        sections.append(
+            {
+                "id": a["id"],
+                "before_frames": [a["start_frame"], a["end_frame"]],
+                "after_frames": [z["start_frame"], z["end_frame"]],
+                "frame_count_equal": timing_equal,
+                "raw_rgba_equal": raw_equal,
+                "decoded_equal": decoded_equal,
+                "classification": classification,
+            }
+        )
+    alignment = {
+        "before": _inspection_alignment(b["segments"], before),
+        "after": _inspection_alignment(now, after),
+    }
+    aligned = all(s["equal"] for group in alignment.values() for s in group)
+    unchanged = all(s["classification"] == "unchanged" for s in sections)
+    # Recheck files after potentially long decoding; a concurrent edit is not evidence.
+    final = _media_pair(snapshot, candidate_receipt, targets)
+    if final != (b, path, old, new, now, rate):
+        raise ValueError("comparison inputs changed during decoding")
+    return {
+        "status": "unchanged_non_target" if unchanged and aligned else "needs_review",
+        "baseline": {
+            "snapshot": str(path),
+            "snapshot_sha256": digest(path),
+            "receipt": str(Path(b["receipt"]).resolve()),
+            "receipt_sha256": digest(b["receipt"]),
+            "video_sha256": old["video_sha256"],
+            "frame_trace_sha256": old["frame_trace"]["sha256"],
+        },
+        "candidate": {
+            "receipt": str(Path(candidate_receipt).resolve()),
+            "receipt_sha256": digest(candidate_receipt),
+            "video_sha256": new["video_sha256"],
+            "frame_trace_sha256": new["frame_trace"]["sha256"],
+        },
+        "non_target_source_unchanged": True,
+        "dependencies_unchanged": True,
+        "non_target_raw_equal": all(s["raw_rgba_equal"] for s in sections),
+        "non_target_decoded_equal": all(s["decoded_equal"] for s in sections),
+        "non_target_frame_counts_equal": all(s["frame_count_equal"] for s in sections),
+        "inspection_windows_agree": aligned,
+        "inspection_alignment": alignment,
+        "sections": sections,
+        "targets": targets,
+        "human_review_required": True,
+        "notice": (
+            "Exact machine layers only. A pass does not judge target meaning, "
+            "layout, or user understanding."
         ),
     }
 
@@ -459,6 +697,10 @@ def main():
     v.add_argument("--baseline", required=True)
     v.add_argument("--run", required=True)
     v.add_argument("--target", required=True)
+    audit_parser = sub.add_parser("audit")
+    audit_parser.add_argument("--baseline", required=True)
+    audit_parser.add_argument("--run", required=True)
+    audit_parser.add_argument("--target", required=True)
     r = sub.add_parser("restore")
     r.add_argument("--baseline", required=True)
     r.add_argument("--run", required=True)
@@ -472,13 +714,15 @@ def main():
             result = apply(read(args.plan), read(args.edits))
         elif args.action == "verify":
             result = verify(args.baseline, args.run, [args.target])
+        elif args.action == "audit":
+            result = audit(args.baseline, args.run, [args.target])
         else:
             result = restore(args.baseline, args.run)
         print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 0
+        return 2 if args.action == "audit" and result["status"] != "unchanged_non_target" else 0
     except (ValueError, KeyError, OSError, subprocess.SubprocessError) as e:
         p.exit(1, str(e) + "\n")
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
