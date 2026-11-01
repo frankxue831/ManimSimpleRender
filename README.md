@@ -221,3 +221,6 @@ For hand-authored scenes, `python -m scene_production` (installed command:
 `scene-production`) renders and checks a video without a storyboard compiler.
 See [usage and limits](docs/scene-production.md). This is a production/checking
 utility, not an automatic scene author.
+
+[Netty and TCP dynamic examples](docs/dynamic-examples.md) show hand-authored
+causal animations, with portable font selection and inspection timelines.
