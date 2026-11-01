@@ -158,3 +158,8 @@ The regression audit still checks every non-target section, even when a dependen
 was omitted. An `encoded_output_changed` classification names the observed layer;
 it cannot distinguish harmless compression from harmful postprocessing and never
 auto-accepts either.
+
+The example checks installed-font coverage for each actual caption before
+constructing Text, including newly supplied edit text. `SCENE_FONT` requests an
+installed family. This example-local helper is not automatic glyph validation
+for arbitrary Scene scripts; media decoding alone cannot detect a tofu glyph.
