@@ -39,7 +39,8 @@ the final edit; replayed source matched the rendered final source hash. Original
 and candidate videos/receipts remain retained. Negative runs rejected unknown
 IDs, stale baselines and an actual out-of-scope source edit. Unit tests additionally
 cover preview tampering, dependency changes, marker injection, wrong video
-geometry, relative frame timing, existing temp-file preservation and CRLF.
+geometry, relative frame timing, existing temp-file preservation, CRLF and
+wrong rendered Scene classes.
 
 Assistant steps remained necessary: choosing the ID from the feedback, writing
 replacement Manim code, declaring shared-state dependencies, reviewing meaning,

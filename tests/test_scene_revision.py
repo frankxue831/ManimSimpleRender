@@ -69,6 +69,7 @@ class RevisionTests(unittest.TestCase):
             "timeline_sha256": rev.digest(run / "timeline.json"),
             "video": str(run / "video.mp4"),
             "video_sha256": rev.digest(run / "video.mp4"),
+            "command": ["python", "-m", "manim", str(self.source), "Demo"],
             "probe": {
                 "streams": [
                     {"codec_type": "video", "avg_frame_rate": "30/1", "width": 16, "height": 16}
@@ -183,6 +184,13 @@ class RevisionTests(unittest.TestCase):
             rev.apply(plan, {"intro": "a=4\n"})
         plan = rev.locate(base, "intro", "change intro", acknowledge=["target"])
         rev.apply(plan, {"intro": "a=4\n"})
+
+    def test_wrong_rendered_scene_class_is_rejected(self):
+        d = json.loads(self.receipt.read_text())
+        d["command"][-1] = "OtherScene"
+        self.receipt.write_text(json.dumps(d))
+        with self.assertRaisesRegex(ValueError, "Scene class"):
+            self.baseline()
 
     def test_actual_dependency_change_rejected(self):
         helper = self.root / "helper.py"

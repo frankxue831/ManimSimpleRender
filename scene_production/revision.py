@@ -108,9 +108,19 @@ def recorded(path):
     return d
 
 
+def rendered_scene(receipt):
+    command = receipt.get("command", [])
+    positions = [i for i, v in enumerate(command) if v == receipt["source"]]
+    if len(positions) != 1 or positions[0] + 1 >= len(command):
+        raise ValueError("render receipt has no unambiguous Scene class command")
+    return command[positions[0] + 1]
+
+
 def capture(manifest_path, receipt_path, store):
     m, path, files, deps, timeline = manifest(manifest_path)
     r = recorded(receipt_path)
+    if rendered_scene(r) != m["scene"]:
+        raise ValueError("rendered Scene class disagrees with manifest")
     if (
         digest(files["source"]) != r["source_sha256"]
         or digest(files["timeline"]) != r["timeline_sha256"]
@@ -346,6 +356,8 @@ def verify(snapshot, candidate_receipt, targets):
         or digest(b["timeline"]) != new["timeline_sha256"]
     ):
         raise ValueError("candidate is not current source/timeline")
+    if rendered_scene(new) != read(b["manifest"])["scene"]:
+        raise ValueError("candidate Scene class disagrees with manifest")
     now = load_timeline(Path(b["timeline"]).read_bytes())["segments"]
     if [s["label"] for s in now] != [s["label"] for s in b["segments"]]:
         raise ValueError("scene ID order changed")

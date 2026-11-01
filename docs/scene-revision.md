@@ -13,6 +13,10 @@ Add paired comments inside ordinary Python source:
 # scene:end lookup
 ```
 
+The manifest Scene class must match the canonical render command; a different
+class in the same source file is rejected. Reinspection receipts without an
+original render command are not accepted as capture baselines.
+
 A UTF-8 manifest next to the source describes the audience, goal, primary sources,
 pitfalls, and each section's key captions, object identities and state dependencies.
 It names source, inspection timeline, Scene class, and local dependency files.
