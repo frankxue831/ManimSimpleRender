@@ -331,6 +331,13 @@ def locate(snapshot, target, feedback, acknowledge=()):
     }
 
 
+def _outside_targets(source, ranges, targets):
+    for name in sorted(targets, key=lambda name: ranges[name][0], reverse=True):
+        start, end, _, _ = ranges[name]
+        source = source[:start] + "<allowed scene body>\n" + source[end:]
+    return source
+
+
 def apply(plan, edits):
     if digest(plan["snapshot"]) != plan["snapshot_sha256"]:
         raise ValueError("snapshot changed")
@@ -348,13 +355,14 @@ def apply(plan, edits):
     updated = src
     for name in sorted(edits, key=lambda n: ranges[n][0], reverse=True):
         replacement = edits[name]
-        if any(MARKER.fullmatch(line) for line in replacement.splitlines()):
-            raise ValueError("replacement cannot inject markers")
         a, z, _, _ = ranges[name]
         updated = updated[:a] + replacement + updated[z:]
     ast.parse(updated)
-    if set(regions(updated)) != set(ranges):
-        raise ValueError("edited markers changed")
+    new_ranges = regions(updated)
+    if list(new_ranges) != list(ranges):
+        raise ValueError("edited marker order changed")
+    if _outside_targets(src, ranges, edits) != _outside_targets(updated, new_ranges, edits):
+        raise ValueError("replacement changed markers or source outside scope")
     if updated == src:
         raise ValueError("no change")
     target = Path(b["source"])
@@ -391,13 +399,7 @@ def check_scope(snapshot, targets):
     if set(a) != set(z) or not targets or any(t not in a for t in targets):
         raise ValueError("invalid target/region set")
 
-    def mask(s, r):
-        for t in sorted(targets, key=lambda t: r[t][0], reverse=True):
-            x, y, _, _ = r[t]
-            s = s[:x] + "<allowed scene body>\n" + s[y:]
-        return s
-
-    if mask(old, a) != mask(new, z):
+    if _outside_targets(old, a, targets) != _outside_targets(new, z, targets):
         raise ValueError("source changed outside declared target")
     manifest(b["manifest"])
     return b, path

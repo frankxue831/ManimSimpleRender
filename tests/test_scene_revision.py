@@ -247,3 +247,25 @@ class RevisionTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "order"):
             rev.manifest(self.manifest)
+
+    def test_marker_looking_lines_inside_an_edited_caption_are_not_markers(self):
+        base = self.baseline()
+        plan = rev.locate(base, "target", "show source markers as caption text")
+        body = (
+            'caption = """\n# scene:start illustration\n'
+            'not a region\n# scene:end illustration\n"""\n'
+        )
+        rev.apply(plan, {"target": body})
+        self.assertEqual(list(rev.regions(self.source.read_text())), ["intro", "target"])
+        rev.check_scope(base, ["target"])
+
+    def test_relocated_end_marker_cannot_swallow_protected_source(self):
+        self.source.write_text(self.source.read_text() + "# '''\ntail=3\n")
+        self.receipt = self.make_run(self.run, self.source.read_bytes())
+        base = self.baseline()
+        plan = rev.locate(base, "target", "change target only")
+        original = self.source.read_bytes()
+        body = "b=5\n# scene:end target\nx='''\n"
+        with self.assertRaisesRegex(ValueError, "scope|marker"):
+            rev.apply(plan, {"target": body})
+        self.assertEqual(self.source.read_bytes(), original)

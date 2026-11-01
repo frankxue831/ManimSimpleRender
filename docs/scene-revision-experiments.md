@@ -103,8 +103,8 @@ real-time human playback. Viewer understanding has not been measured.
 
 At the implementation/example commits:
 
-- Full headless suite after the caption guard: 913 tests run, OK (2 skipped).
-- Separate existing Python 3.13 without Manim: 57 targeted core/architecture/example tests passed.
+- Full headless suite after the caption guard: 915 tests run, OK (2 skipped).
+- Separate existing Python 3.13 without Manim: 59 targeted core/architecture/example tests passed.
 - Black checked 134 files; flake8 and `git diff --check` passed.
 - Wheel built with `pip wheel --no-deps --no-build-isolation`; running its CLI from
   outside the checkout rendered the real 24 fps probe and selected exact frame 31.
@@ -153,3 +153,13 @@ an 18-second evidence hold, a 16-second limits hold and a clearer 10-second endi
 Nine unchanged assembled shots (4080 frames) were also compared at mapped frame
 windows. This private FFmpeg-assembly check reuses decoded comparison only, with
 actual chunk counts probed; it is not a Scene source-scope audit or a new editor.
+
+
+A final caption-code regression found that apply still rejected marker-looking
+lines inside a quoted caption, despite the locator correctly tokenizing them.
+The fix reuses exact outside-target masking before source replacement, after
+parsing the complete updated source and checking marker order. Quoted marker text
+is accepted; actual marker injection or relocated-end swallowing is rejected
+before writing. Independent adversarial probes agreed. A real 17-second quoted-
+caption revision rendered successfully with only the original three scene IDs;
+its two non-target sections (300 frames) remained raw/decoded exact.
