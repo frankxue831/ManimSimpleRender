@@ -9,6 +9,7 @@ import os
 import re
 from pathlib import Path
 import struct
+import sys
 import subprocess
 import tempfile
 import threading
@@ -175,6 +176,14 @@ def _failure(run, receipt, stage, exc):
     exc.receipt_path = str(run / "result.json")
 
 
+def _preview_frame_index(sample, trace):
+    from .frame_clock import frame_coordinate
+
+    coordinate, nearest, error, limit = frame_coordinate(sample, trace["frame_rate"])
+    index = nearest if error <= limit else math.ceil(coordinate)
+    return min(index, trace["frame_count"] - 1)
+
+
 def _inspect_video(video, data, run, tool_timeout, receipt):
     """One complete checker for render/reinspection, using sequential frame extraction."""
     receipt["stage"] = "inspection_integrity"
@@ -196,6 +205,15 @@ def _inspect_video(video, data, run, tool_timeout, receipt):
         )
     )
     stream = next(s for s in probe["streams"] if s["codec_type"] == "video")
+    trace = None
+    if "frame_trace" in receipt:
+        from .frame_trace import read_trace
+
+        receipt["stage"] = "frame_trace"
+        entry = receipt["frame_trace"]
+        _verify_file(entry["path"], run, entry["sha256"])
+        trace = read_trace(entry["path"], receipt["source_sha256"], stream)
+        receipt["stage"] = "probe"
     duration, duration_method = video_duration(stream, video, tool_timeout)
     numerator, denominator = map(int, stream["avg_frame_rate"].split("/"))
     fps = numerator / denominator
@@ -242,8 +260,31 @@ def _inspect_video(video, data, run, tool_timeout, receipt):
             frame = run / "frames" / ("%03d.png" % len(plan))
             plan.append((index, sample, frame))
     for index, sample, frame in plan:
-        tool(
-            [
+        if trace is not None:
+            from fractions import Fraction
+
+            native_rate = Fraction(trace["frame_rate"])
+            native_index = _preview_frame_index(sample, trace)
+            # Index selection avoids ambiguous timestamp seeking at a boundary
+            # and remains valid for short final sections with no later PTS.
+            command = [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-xerror",
+                "-i",
+                str(video),
+                "-map",
+                "0:v:0",
+                "-vf",
+                f"select=eq(n\\,{native_index})",
+                "-frames:v",
+                "1",
+                str(frame),
+            ]
+        else:
+            command = [
                 "ffmpeg",
                 "-nostdin",
                 "-v",
@@ -258,9 +299,8 @@ def _inspect_video(video, data, run, tool_timeout, receipt):
                 "-frames:v",
                 "1",
                 str(frame),
-            ],
-            tool_timeout,
-        )
+            ]
+        tool(command, tool_timeout)
         header = frame.read_bytes()[:24]
         if (
             len(header) != 24
@@ -268,9 +308,14 @@ def _inspect_video(video, data, run, tool_timeout, receipt):
             or struct.unpack(">II", header[16:24]) != (stream["width"], stream["height"])
         ):
             raise RuntimeError("invalid PNG or changed resolution")
-        frames.append(
-            {"path": str(frame), "time": sample, "segment": index, "sha256": digest(frame)}
-        )
+        item = {"path": str(frame), "time": sample, "segment": index, "sha256": digest(frame)}
+        if trace is not None:
+            item.update(
+                native_frame_index=native_index,
+                native_time=str(Fraction(native_index, native_rate)),
+                time_notice="time is requested seconds; native_frame_index is extracted exactly",
+            )
+        frames.append(item)
     receipt["stage"] = "inspection_integrity"
     for path, expected in (
         (video, receipt["video_sha256"]),
@@ -278,6 +323,9 @@ def _inspect_video(video, data, run, tool_timeout, receipt):
         (run / "timeline.json", receipt["timeline_sha256"]),
     ):
         _verify_file(str(path), run, expected)
+    if "frame_trace" in receipt:
+        entry = receipt["frame_trace"]
+        _verify_file(entry["path"], run, entry["sha256"])
     return dict(
         probe=probe,
         frames=frames,
@@ -298,8 +346,11 @@ def render(
     tool_timeout=30,
     cancel_event=None,
     runner=None,
+    record_scene_frames=False,
 ):
     """Return success only after machine inspection; failures retain result.json."""
+    if type(record_scene_frames) is not bool:
+        raise ValueError("record_scene_frames must be boolean")
     for value in (timeout, tool_timeout):
         if not 0 < number(value) <= 3600:
             raise ValueError("timeouts must be in (0, 3600]")
@@ -333,8 +384,16 @@ def render(
         job = RenderJob(str(source), scene)
         command = build_command(job, flag, str(run / "media"))
         command += ["--disable_caching"]
+        if record_scene_frames:
+            if command[:3] != [sys.executable, "-m", "manim"]:
+                raise ValueError("frame tracing requires the normal Python Manim environment")
+            command[2] = "scene_production.frame_capture"
         env = os.environ.copy()
         env["PYTHONDONTWRITEBYTECODE"] = "1"
+        if record_scene_frames:
+            env["SCENE_PRODUCTION_FRAME_TRACE"] = str(run / "frame-trace.json")
+        else:
+            env.pop("SCENE_PRODUCTION_FRAME_TRACE", None)
         env["PYTHONPATH"] = str(source.parent) + os.pathsep + env.get("PYTHONPATH", "")
         stage = "render"
         with (run / "render.log").open("w") as log:
@@ -384,6 +443,9 @@ def render(
             timeline_sha256=timeline_sha,
             command=command,
         )
+        if record_scene_frames:
+            trace_path = run / "frame-trace.json"
+            receipt["frame_trace"] = {"path": str(trace_path), "sha256": digest(trace_path)}
         _write_receipt(run, receipt)
         inspection = _inspect_video(video, data, run, tool_timeout, receipt)
         receipt.update(

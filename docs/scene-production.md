@@ -58,3 +58,15 @@ Old failed receipts without a recorded completed-video identity are rejected;
 current hashes cannot reconstruct historical identity. Hashes detect changed
 bytes but do not authenticate unsigned receipts. API:
 `scene_production.reinspection.reinspect(from_run, timeline, output_dir)`.
+
+## Observed scene revision evidence
+
+For the optional full-Cairo revision path, add native `next_section("stable-id")`
+calls and pass `--record-scene-frames`. Call `self.next_section("stable-id")`
+(or `mark_section`) before the first emitted frame, including the first `play` or
+`wait`; a frame before that section fails the traced render and records the cause
+in `render.log`. The ordinary flag-off path has no such tracing requirement. This records actual section frame bounds
+and pre-encoding RGBA hashes; traced previews select exact decoded frame indices.
+See [scene revision usage and limits](scene-revision.md) and the
+[controlled experiment evidence](scene-revision-experiments.md). Ordinary rendering
+remains the default, and machine checks do not establish semantic correctness.

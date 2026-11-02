@@ -1,0 +1,3 @@
+{
+  "distinction": "        self.next_section('distinction')\n        self.play(Transform(cap,label('改动画要重新渲染')))\n        self.play(dot.animate.shift(RIGHT*4),run_time=2)\n        self.play(Transform(cap,label('只改检查时刻：复用原视频，并核对身份')))\n        hold_until_frame(self,420)\n"
+}

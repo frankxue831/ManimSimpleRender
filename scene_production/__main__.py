@@ -35,6 +35,11 @@ def main():
     for name in ("scene-file", "scene", "timeline", "output-dir"):
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--quality", default="qm")
+    parser.add_argument(
+        "--record-scene-frames",
+        action="store_true",
+        help="Record native section bounds and raw RGBA frame hashes",
+    )
     parser.add_argument("--timeout", type=float, default=120)
     parser.add_argument("--tool-timeout", type=float, default=30)
     args = parser.parse_args()

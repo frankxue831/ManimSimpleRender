@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "source": "scenes/revision_flow.py",
+  "timeline": "revisions/flow.timeline.json",
+  "scene": "RevisionFlow",
+  "dependencies": [
+    "scenes/scene_font.py"
+  ],
+  "brief": {
+    "audience": "programmers",
+    "goal": "distinguish render and reinspection",
+    "sources": [
+      "docs/scene-production.md",
+      "docs/scene-revision.md"
+    ],
+    "pitfalls": [
+      "inspection does not establish meaning"
+    ]
+  },
+  "segments": [
+    {
+      "id": "setup",
+      "captions": [
+        "assistant writes source"
+      ],
+      "objects": [
+        "caption",
+        "blue-dot"
+      ],
+      "depends_on": []
+    },
+    {
+      "id": "distinction",
+      "captions": [
+        "content changes need render"
+      ],
+      "objects": [
+        "caption",
+        "blue-dot"
+      ],
+      "depends_on": [
+        "setup"
+      ]
+    },
+    {
+      "id": "tail",
+      "captions": [
+        "persistent dot remains"
+      ],
+      "objects": [
+        "caption",
+        "blue-dot"
+      ],
+      "depends_on": [
+        "distinction"
+      ]
+    }
+  ]
+}
