@@ -269,3 +269,97 @@ class RevisionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "scope|marker"):
             rev.apply(plan, {"target": body})
         self.assertEqual(self.source.read_bytes(), original)
+
+    def test_plan_scope_and_dependency_metadata_cannot_be_hand_widened(self):
+        base = self.baseline()
+        plan = rev.locate(base, "target", "change only target")
+        plan["scope"] = ["intro", "target"]
+        original = self.source.read_bytes()
+        with self.assertRaisesRegex(ValueError, "scope"):
+            rev.apply(plan, {"intro": "a=9\n", "target": "b=3\n"})
+        self.assertEqual(self.source.read_bytes(), original)
+        plan = rev.locate(base, "target", "change")
+        plan["dependent_segments"] = ["intro"]
+        plan["acknowledged_dependents"] = ["intro"]
+        with self.assertRaisesRegex(ValueError, "depend"):
+            rev.apply(plan, {"target": "b=3\n"})
+
+    def test_non_string_edit_values_are_clean_validation_errors(self):
+        base = self.baseline()
+        plan = rev.locate(base, "target", "change")
+        for value in [123, None, [], {}, True]:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "string"):
+                    rev.apply(plan, {"target": value})
+                self.assertIn("b=2", self.source.read_text())
+
+    def test_restore_checks_destination_hashes_after_all_copies(self):
+        base = self.baseline()
+        rev.apply(rev.locate(base, "target", "change"), {"target": "b=3\n"})
+        run = self.root / "candidate"
+        run.mkdir()
+        (run / "video.mp4").write_bytes(b"newvideo")
+        receipt = self.make_run(run, self.source.read_bytes())
+        original = rev.shutil.copyfile
+
+        def corrupt_after_timeline(src, dst):
+            result = original(src, dst)
+            if Path(dst).resolve() == self.timeline.resolve():
+                self.source.write_text("corrupted during restore\n")
+            return result
+
+        with patch.object(rev.shutil, "copyfile", side_effect=corrupt_after_timeline):
+            with self.assertRaisesRegex(ValueError, "restore.*verification"):
+                rev.restore(base, receipt)
+
+    def test_plan_cannot_erase_real_dependent_acknowledgements(self):
+        m = json.loads(self.manifest.read_text())
+        m["segments"][1]["depends_on"] = ["intro"]
+        self.manifest.write_text(json.dumps(m))
+        base = self.baseline()
+        plan = rev.locate(base, "intro", "change", acknowledge=["target"])
+        plan["dependent_segments"] = []
+        plan["acknowledged_dependents"] = []
+        original = self.source.read_bytes()
+        with self.assertRaisesRegex(ValueError, "dependent"):
+            rev.apply(plan, {"intro": "a=3\n"})
+        self.assertEqual(self.source.read_bytes(), original)
+
+    def test_cli_non_string_edit_has_no_traceback(self):
+        import subprocess
+        import sys
+
+        base = self.baseline()
+        plan = self.root / "plan.json"
+        edits = self.root / "edits.json"
+        plan.write_text(json.dumps(rev.locate(base, "target", "change")))
+        edits.write_text(json.dumps({"target": 123}))
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "scene_production.revision",
+                "apply",
+                "--plan",
+                str(plan),
+                "--edits",
+                str(edits),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("string", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_apply_recomputes_dependencies_without_requiring_preview_images(self):
+        preview = self.run / "preview.png"
+        preview.write_bytes(b"preview")
+        data = json.loads(self.receipt.read_text())
+        data["frames"] = [{"path": str(preview), "time": 1.5, "sha256": rev.digest(preview)}]
+        self.receipt.write_text(json.dumps(data))
+        base = self.baseline()
+        plan = rev.locate(base, "target", "change")
+        preview.unlink()
+        rev.apply(plan, {"target": "b=3\n"})
+        self.assertIn("b=3", self.source.read_text())

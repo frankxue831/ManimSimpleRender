@@ -253,6 +253,19 @@ def check_static(b):
             raise ValueError("manifest or dependency changed: " + p)
 
 
+def _dependent_segments(segments, target):
+    affected = set()
+    changed = {target}
+    while True:
+        more = {s["id"] for s in segments if changed.intersection(s["depends_on"])}
+        more -= changed
+        if not more:
+            break
+        affected.update(more)
+        changed.update(more)
+    return sorted(affected)
+
+
 def locate(snapshot, target, feedback, acknowledge=()):
     b, path = baseline(snapshot)
     check_static(b)
@@ -291,16 +304,7 @@ def locate(snapshot, target, feedback, acknowledge=()):
             else preview_window["start"] < f["time"] < preview_window["end"]
         )
     ]
-    affected = set()
-    changed = {target}
-    while True:
-        more = {s["id"] for s in m["segments"] if changed.intersection(s["depends_on"])}
-        more -= changed
-        if not more:
-            break
-        affected.update(more)
-        changed.update(more)
-    affected = sorted(affected)
+    affected = _dependent_segments(m["segments"], target)
     if not set(acknowledge).issubset(affected):
         raise ValueError("acknowledgement includes unknown dependent")
     for frame in previews:
@@ -339,17 +343,38 @@ def _outside_targets(source, ranges, targets):
 
 
 def apply(plan, edits):
+    if (
+        not isinstance(plan, dict)
+        or not isinstance(plan.get("target"), str)
+        or plan.get("scope") != [plan["target"]]
+    ):
+        raise ValueError("plan scope must contain only its located target")
+    if not isinstance(edits, dict) or any(not isinstance(value, str) for value in edits.values()):
+        raise ValueError("edits must map scene IDs to string replacement bodies")
+    acknowledgements = plan.get("acknowledged_dependents", [])
+    if not isinstance(acknowledgements, list) or any(
+        not isinstance(v, str) for v in acknowledgements
+    ):
+        raise ValueError("dependent acknowledgements must be a list of IDs")
     if digest(plan["snapshot"]) != plan["snapshot_sha256"]:
         raise ValueError("snapshot changed")
     b, path = baseline(plan["snapshot"])
     check_static(b)
     if set(edits) != set(plan["scope"]):
         raise ValueError("edits must exactly match explicit scope")
-    if not set(plan["dependent_segments"]).issubset(plan.get("acknowledged_dependents", [])):
-        raise ValueError("dependent scenes require explicit acknowledgement and regression checks")
     for p in (b["source"], b["timeline"]):
         if digest(p) != b["files"][p]["sha256"]:
             raise ValueError("stale baseline: current inputs changed")
+    m = manifest(b["manifest"])[0]
+    if plan["target"] not in {segment["id"] for segment in m["segments"]}:
+        raise ValueError("unknown target: " + plan["target"])
+    expected_dependents = _dependent_segments(m["segments"], plan["target"])
+    if plan.get("dependent_segments") != expected_dependents:
+        raise ValueError("plan dependent scenes disagree with the current manifest")
+    if not set(acknowledgements).issubset(expected_dependents):
+        raise ValueError("acknowledgement includes unknown dependent")
+    if not set(expected_dependents).issubset(acknowledgements):
+        raise ValueError("dependent scenes require explicit acknowledgement and regression checks")
     src = Path(b["source"]).read_bytes().decode("utf-8")
     ranges = regions(src)
     updated = src
@@ -672,6 +697,11 @@ def restore(snapshot, current_receipt):
             raise ValueError("current files differ from guarded candidate")
     for key in ("source", "timeline"):
         shutil.copyfile(path.parent / b["files"][b[key]]["copy"], b[key])
+    for key in ("source", "timeline"):
+        if digest(b[key]) != b["files"][b[key]]["sha256"]:
+            raise ValueError(
+                "restore verification failed for " + key + "; files may be partially restored"
+            )
     return {
         "restored_from": str(path),
         "source_sha256": digest(b["source"]),

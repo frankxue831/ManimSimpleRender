@@ -82,3 +82,56 @@ class CaptureHooksTests(unittest.TestCase):
             w.write_frame(Pixels())
             with self.assertRaisesRegex(ValueError, "writer"):
                 Writer().write_frame(Pixels())
+
+    def test_validation_failure_closes_active_encoder_before_propagating(self):
+        from queue import Queue
+        from threading import Thread
+
+        class ActiveWriter(Writer):
+            def __init__(self):
+                super().__init__()
+                self.queue = Queue()
+                self.writer_thread = Thread(target=self.queue.get, daemon=True)
+                self.writer_thread.start()
+                self.closed = 0
+
+            def close_partial_movie_stream(self):
+                self.queue.put((-1, None))
+                self.writer_thread.join(timeout=1)
+                self.closed += 1
+
+        writer = ActiveWriter()
+        try:
+            with self.assertRaisesRegex(ValueError, "next_section"):
+                with capture_hooks(ActiveWriter, FakeScene, "a" * 64):
+                    writer.write_frame(Pixels())
+            self.assertFalse(writer.writer_thread.is_alive())
+            self.assertEqual(writer.closed, 1)
+        finally:
+            writer.close_partial_movie_stream()
+
+    def test_cleanup_failure_does_not_replace_original_capture_error(self):
+        class BrokenClose(Writer):
+            def __init__(self):
+                super().__init__()
+                self.writer_thread = SimpleNamespace(is_alive=lambda: True)
+
+            def close_partial_movie_stream(self):
+                raise RuntimeError("cleanup detail")
+
+        with self.assertRaisesRegex(ValueError, "next_section") as caught:
+            with capture_hooks(BrokenClose, FakeScene, "a" * 64):
+                BrokenClose().write_frame(Pixels())
+        self.assertTrue(any("cleanup detail" in note for note in caught.exception.__notes__))
+
+    def test_rejected_second_writer_containers_are_both_closed(self):
+        closed = []
+        a, b = Writer(), Writer()
+        a.video_container = SimpleNamespace(close=lambda: closed.append("a"))
+        b.video_container = SimpleNamespace(close=lambda: closed.append("b"))
+        with self.assertRaisesRegex(ValueError, "one writer"):
+            with capture_hooks(Writer, FakeScene, "a" * 64):
+                FakeScene(a).next_section("intro")
+                a.write_frame(Pixels())
+                b.write_frame(Pixels())
+        self.assertEqual(closed, ["a", "b"])

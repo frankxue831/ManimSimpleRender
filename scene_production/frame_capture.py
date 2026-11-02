@@ -21,9 +21,12 @@ class _CaptureState:
     def __init__(self, source_sha256):
         self.source_sha256 = source_sha256
         self.writer = None
+        self.writers = []
         self.collector = None
 
     def owner(self, writer):
+        if not any(value is writer for value in self.writers):
+            self.writers.append(writer)
         if self.writer is not None and self.writer is not writer:
             raise ValueError("frame capture supports exactly one writer")
         self.writer = writer
@@ -32,6 +35,22 @@ class _CaptureState:
             self.collector = FrameTrace(rate, self.source_sha256)
         writer._scene_production_frame_count = self.collector.count
         return self.collector
+
+    def abort(self, error):
+        # Manim starts a non-daemon queue consumer before calling write_frame.
+        # A hook exception bypasses Scene.tear_down; stop that consumer so the
+        # child can report its original failure instead of waiting for timeout.
+        for writer in self.writers:
+            try:
+                thread = getattr(writer, "writer_thread", None)
+                if thread is not None and thread.is_alive():
+                    writer.close_partial_movie_stream()
+                else:
+                    container = getattr(writer, "video_container", None)
+                    if container is not None:
+                        container.close()
+            except Exception as cleanup_error:
+                error.add_note("frame writer cleanup failed: " + str(cleanup_error))
 
     def finish(self):
         if self.collector is None:
@@ -68,6 +87,9 @@ def capture_hooks(writer_class, scene_class, source_sha256):
     scene_class.next_section = section
     try:
         yield state
+    except BaseException as error:
+        state.abort(error)
+        raise
     finally:
         writer_class.write_frame = original_write
         scene_class.next_section = original_section

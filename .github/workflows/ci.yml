@@ -101,6 +101,11 @@ jobs:
           python -c "import manim, manim_voiceover; print('manim', manim.__version__)"
           explainer verify examples/evidence-budget.story.yaml
 
+      - name: Traced render failure exits without encoder thread hang
+        run: |
+          source .venv/bin/activate
+          python -m unittest tests.test_frame_capture_process
+
   test-windows-render-supervision:
     runs-on: windows-latest
     steps:
