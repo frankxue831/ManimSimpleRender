@@ -4,6 +4,23 @@ All notable changes to this project are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`scene-production` command** (also `python -m scene_production`) for rendering a trusted, hand-authored Manim `Scene` and checking the result: full video decoding, native-resolution PNG samples at timeline points, and retained source/timeline/video identities. A timeline is inspection configuration and does not drive animation (#16).
+- **Recorded-video reinspection:** re-check a retained video when only the inspection timeline changes, without rerunning Manim; changed video bytes are rejected (#16).
+- **Netty EventLoop and TCP message-framing examples** with inspection timelines and font-coverage checks (#16).
+- **Scene revision helpers** (`python -m scene_production.revision`): capture a version, locate a stable scene ID, apply an author-written edit with stale and scope guards, audit that non-target sections render the same frames, and restore. The caller picks the target and writes the edit; the tool doesn't interpret feedback or design animation (#17).
+- **`--record-scene-frames`** (opt-in) records native section boundaries and pre-encoding frame hashes; normal rendering is unchanged when it's off (#17).
+
+### Known limits
+
+- #16 rendering and fonts were tested on macOS only. The #17 example flow was also run once on Linux (Debian 13, Python 3.12, Manim 0.20.1, Noto Sans CJK SC); Windows, OpenGL and other Manim versions are untested (#16, #17).
+- `restore` needs the baseline run directory and the candidate video to still exist (#17).
+- Visual review was sampled, not full playback. Machine checks don't establish whether a scene's content is correct (#16, #17).
+- Restore is not a crash-safe multi-file transaction (#17).
+
 ## [0.2.0] - 2026-10-23
 
 ### Breaking: how you install it
