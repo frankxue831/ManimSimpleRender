@@ -53,7 +53,14 @@ including Python indentation and line endings. The replacement cannot insert
 markers. An obsolete baseline, changed manifest/dependency, changed code outside
 the target, or mismatched rendered input identity is rejected. If locating finds
 transitive dependent scenes, explicitly pass `--acknowledge ID` for each when
-creating the plan. They are regression-checked, not silently authorized for edits.
+creating the plan. Acknowledgement does not authorize edits: dependent source
+text must stay
+identical, and mapped raw/decoded frames, relative PTS and durations must stay
+exactly equal. It does not require the whole edited MP4 to have identical bytes.
+This is a single-target workflow. If dependent output is intentionally changed,
+the current unchanged-non-target audit must remain unsuccessful; review those
+changes explicitly and establish a new baseline for subsequent revisions. Do not
+widen the plan or reinterpret acknowledgement as multi-scene edit authorization.
 A shared helper change requires a new explicit baseline/scope, not bypassing guards.
 
 Capture creates a new version directory, retains copies and hashes, and never
@@ -80,6 +87,11 @@ Dependency hashes are captured at snapshot time, not proof of the render environ
 No performance or cost saving is promised without a fair measured baseline.
 
 ## Optional observed frame evidence
+
+The local render evidence used macOS arm64, Python 3.13.0 and Manim 0.20.1.
+Repository CI covers headless/installation checks on Python 3.12/3.13 and a
+native traced-failure subprocess on Ubuntu. That is not visual/font acceptance
+across Windows/Linux or other Manim/OpenGL versions.
 
 For a full ordinary Cairo Scene render, `scene-production ... --record-scene-frames`
 records SHA-256 hashes of the exact uint8 RGBA arrays passed to Manim's writer,
@@ -143,7 +155,7 @@ python -m examples.revisions.run_flow --output /tmp/new-revision-flow
 ```
 
 The output directory must not exist. The example copies its authoring files there,
-then renders a17-second baseline, captures a version, locates the authored target,
+then renders a 17-second baseline, captures a version, locates the authored target,
 applies an authored replacement and an explicit inspection timeline, renders the
 19-second revision and audits both. Finally it actually restores and replays the
 source and timeline and checks exact replay identity. It leaves both full videos,
@@ -163,3 +175,20 @@ The example checks installed-font coverage for each actual caption before
 constructing Text, including newly supplied edit text. `SCENE_FONT` requests an
 installed family. This example-local helper is not automatic glyph validation
 for arbitrary Scene scripts; media decoding alone cannot detect a tofu glyph.
+
+
+### Retention and restore verification
+
+Keep the version store **and both original baseline and candidate render run
+directories** intact (receipts, retained source/timeline/video and optional trace).
+The store is not a standalone disaster-recovery archive: restore verifies both run
+identities before writing and refuses missing or corrupted artifacts. It also
+re-hashes both destination files after copying and reports a verification failure
+instead of a successful partial restore.
+
+Restore remains guarded by the candidate source/timeline hashes and is not a
+crash-atomic transaction. If current files drift after restoration, or a run is
+lost/corrupted, automatic re-restore refuses. Recovery then requires explicit
+manual review and recovery from the hash-checked source/timeline copies named in
+the snapshot; there is no force-restore command and original evidence must not be
+rewritten to bypass a guard.

@@ -4,6 +4,11 @@ This is local evidence from a bounded exploration, not a claim of automatic vide
 authoring, semantic verification or measured workflow efficiency. The earlier
 closed evaluation (one passing case, one failing index case) remains unchanged.
 The new controlled baselines below do not retroactively pass that failure.
+Logs, videos and the full 168s/90s evaluation sources are intentionally outside
+this repository. Those numerical figures are archival local observations, not
+standalone reproducible benchmarks here; the included flow example and tests are
+reproducible. "Independent review" here means separate AI-agent review passes,
+not a human study or evidence of measured viewer understanding.
 
 ## Three experiment rounds
 
@@ -78,7 +83,7 @@ python -m examples.revisions.run_flow --output /tmp/new-revision-flow
 It renders both versions, locates/applies a supplied edit, audits, actually restores
 and replays source/timeline and checks exact replay. No model/provider is called.
 The assistant supplied the brief, target, edits, timing/configuration and semantic
-judgment. Independent agents reviewed facts, visuals and code. These human/agent
+judgment. Separate AI review agents reviewed facts, visuals and code. These human/agent
 steps were not replaced by the tool.
 
 Eight serial 19 sScene pipeline measurements produced the same MP4 SHA with or
@@ -119,7 +124,9 @@ At the implementation/example commits:
   Stale apply, unknown target, out-of-scope edit and guarded-restore negatives also
   rejected; all deliberately changed bytes were restored.
 
-No remote CI was triggered: this work remained local. The archived reproduction
+The rendering experiments below ran locally on one Mac; repository CI does not
+reproduce them. PR #17 subsequently passed headless, packaging and installation
+CI on Python 3.12/3.13 plus Windows process-supervision checks. The archived reproduction
 uses the same Mac and installed dependencies, not a second platform/environment.
 
 ## Index teaching sources
@@ -151,7 +158,7 @@ review and the actual-output regression check.
 The final comparison is 206 seconds after a readability revision: shorter headers,
 an 18-second evidence hold, a 16-second limits hold and a clearer 10-second ending.
 Nine unchanged assembled shots (4080 frames) were also compared at mapped frame
-windows. This private FFmpeg-assembly check reuses decoded comparison only, with
+windows. This local one-off FFmpeg-assembly check reuses decoded comparison only, with
 actual chunk counts probed; it is not a Scene source-scope audit or a new editor.
 
 

@@ -54,7 +54,7 @@ production times or efficiency comparisons. Overall assistant/model latency,
 token counts, monetary costs and exact backend model identity were unavailable.
 No fair no-tool timing baseline was established, so no saving is claimed.
 
-Independent review found no remaining mandatory factual/layout issue in the final
+A separate AI-agent review pass found no remaining mandatory factual/layout issue in the final
 targets after the two corrections; it sampled both target intervals at 2fps plus
 native key frames. This is not full playback or a test of user understanding.
 The retained introduction's original "no product code changed" footer describes
