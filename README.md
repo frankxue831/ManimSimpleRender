@@ -1,5 +1,9 @@
 # ManimSimpleRender
 
+For explicitly selected editable ordinary Scene inputs, see
+[portable project export and receiving preflight](docs/portable-projects.md).
+Inspection does not execute the project; rendering remains a separate trusted-code action.
+
 **Explainer Engine**: turns a short storyboard YAML that cites real source lines into a narrated,
 animated Manim video, and refuses to render if a citation no longer matches the code.
 

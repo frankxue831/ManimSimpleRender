@@ -387,7 +387,13 @@ def render(
         if record_scene_frames:
             if command[:3] != [sys.executable, "-m", "manim"]:
                 raise ValueError("frame tracing requires the normal Python Manim environment")
-            command[2] = "scene_production.frame_capture"
+            command = [
+                sys.executable,
+                "-I",
+                str(Path(__file__).with_name("launcher.py")),
+                "capture",
+                *command[3:],
+            ]
         env = os.environ.copy()
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         if record_scene_frames:

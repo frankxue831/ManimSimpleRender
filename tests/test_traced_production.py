@@ -30,7 +30,9 @@ class TracedProductionTests(unittest.TestCase):
         class Runner:
             def run_job(self, job, command, event, on_log, env):
                 result = base.run_job(job, command, event, on_log, env)
-                outer.assertEqual(command[2], "scene_production.frame_capture")
+                outer.assertEqual(command[1], "-I")
+                outer.assertEqual(Path(command[2]).name, "launcher.py")
+                outer.assertEqual(command[3], "capture")
                 c = FrameTrace("30/1", digest(outer.source))
                 c.section("one")
                 c.add_frame(bytes(16 * 16 * 4), (16, 16, 4), 29 if mode == "count" else 30)

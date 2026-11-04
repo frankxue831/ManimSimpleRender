@@ -95,6 +95,18 @@ def capture_hooks(writer_class, scene_class, source_sha256):
         scene_class.next_section = original_section
 
 
+@contextmanager
+def _source_import_path(source):
+    previous = list(sys.path)
+    trusted = str(Path(__file__).resolve().parent.parent)
+    project = str(source.parent)
+    sys.path[:] = [trusted, project, *[p for p in previous if p not in (trusted, project)]]
+    try:
+        yield
+    finally:
+        sys.path[:] = previous
+
+
 def main():
     target = os.environ.get("SCENE_PRODUCTION_FRAME_TRACE")
     if not target or len(sys.argv) < 2:
@@ -105,7 +117,8 @@ def main():
     from manim import Scene
     from manim.scene.scene_file_writer import SceneFileWriter
 
-    with capture_hooks(SceneFileWriter, Scene, source_sha) as state:
+    # Installed Manim and product imports are resolved before trusted scene helpers.
+    with _source_import_path(source), capture_hooks(SceneFileWriter, Scene, source_sha) as state:
         sys.argv[0] = "manim"
         try:
             runpy.run_module("manim", run_name="__main__")
