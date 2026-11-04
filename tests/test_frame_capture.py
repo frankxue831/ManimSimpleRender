@@ -37,6 +37,17 @@ class FakeScene:
 
 
 class CaptureHooksTests(unittest.TestCase):
+    def test_source_import_path_keeps_product_first_and_restores_state(self):
+        from pathlib import Path
+        import sys
+        from scene_production.frame_capture import _source_import_path
+
+        original = list(sys.path)
+        with _source_import_path(Path("/example/source/scene.py")):
+            self.assertEqual(Path(sys.path[0]), Path(__file__).resolve().parents[1])
+            self.assertEqual(sys.path[1], "/example/source")
+        self.assertEqual(sys.path, original)
+
     def test_observation_counter_and_original_writes_preserved(self):
         original_write = Writer.write_frame
         original_section = FakeScene.next_section

@@ -13,15 +13,23 @@ redistribution permission/licence note. No directory glob or dependency discover
 copies unrelated files. Source code can still read undeclared external resources;
 the tool checks declared closure, not arbitrary Python behaviour.
 
+Resolve a trusted interpreter and launcher **outside** the received project first.
+Keep those paths quoted; never resolve the launcher from imported project files.
+For example, set `RECEIVER_PY` to the existing environment's Python and
+`RECEIVER_LAUNCHER` to that trusted product's `scene_production/launcher.py`.
+
 ```sh
-python -m scene_production.portable export --project examples/handoff/project.json --output project.zip
-python -m scene_production.portable inspect project.zip
-python -m scene_production.portable unpack project.zip received
-python -m scene_production.portable preflight received
+"$RECEIVER_PY" -I "$RECEIVER_LAUNCHER" portable export --project examples/handoff/project.json --output project.zip
+"$RECEIVER_PY" -I "$RECEIVER_LAUNCHER" portable inspect project.zip
+"$RECEIVER_PY" -I "$RECEIVER_LAUNCHER" portable unpack project.zip received
+"$RECEIVER_PY" -I "$RECEIVER_LAUNCHER" portable preflight received
 ```
 
 Inspection validates a bounded ZIP inventory, relative names, SHA256 and the
-selected revision manifest inputs. It does not import project Python. Unpack
+selected revision manifest inputs. The trusted FILE launcher requires `-I`, excluding CWD/PYTHONPATH/user-site
+startup paths before importing the tool. Ordinary `python -m` entry points require
+a trusted caller directory and are not a safe bootstrap from an untrusted project.
+This is startup-path isolation, not a render sandbox. Unpack
 requires a new destination and validates everything before publishing it.
 Preflight checks input hashes, static scene-ID/timeline mapping, Python range,
 exact declared distribution versions, executables on PATH and installed font
@@ -62,3 +70,14 @@ Editing intentionally invalidates the old inventory. Re-export project.json to a
 new version, retain the original ZIP/hash and return a relative evidence summary.
 A same-machine clean-directory test does not establish cross-machine portability
 or faster editing. Report observed environment and any manual/agent intervention.
+
+Before constructing ZipFile entries, import bounds the ordinary ZIP container to
+72 MiB, central directory to 1 MiB and total entries to 130 (including inventory).
+Comments, ZIP64 end records, split volumes, prefixes and trailing data are refused.
+Existing exports use this ordinary format. These bounds limit metadata parsing;
+they are not a general decompression sandbox or a total process-memory guarantee.
+
+Traced rendering also launches its existing capture helper through the trusted
+FILE launcher with `-I`, so an unpacked trusted tool does not need installation
+for its child to find the package. Installed Manim imports resolve before the
+explicitly trusted source/helper directory; this remains code execution, not a sandbox.

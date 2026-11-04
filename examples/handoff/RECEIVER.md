@@ -10,9 +10,15 @@ FFmpeg must already exist. The example requests Arial Unicode MS; use no font
 downloads. If absent, report the missing font. An explicit font substitution
 requires a new baseline and must be reported as a visual change.
 
-1. `python -m scene_production.portable inspect project.zip`
-2. `python -m scene_production.portable unpack project.zip received`
-3. `python -m scene_production.portable preflight received`
+Resolve `RECEIVER_PY` and `RECEIVER_LAUNCHER` from the already trusted environment
+and product before entering imported code; never use a launcher from the bundle.
+Use quoted absolute paths. The launcher requires Python `-I` so CWD/PYTHONPATH and
+user-site startup paths cannot replace the tool before inspection. This is not a
+sandbox for subsequently trusted rendering.
+
+1. `"$RECEIVER_PY" -I "$RECEIVER_LAUNCHER" portable inspect project.zip`
+2. `"$RECEIVER_PY" -I "$RECEIVER_LAUNCHER" portable unpack project.zip received`
+3. `"$RECEIVER_PY" -I "$RECEIVER_LAUNCHER" portable preflight received`
 
 No project module runs in those steps. `ready: true` is not a code-safety verdict.
 Review `handoff.json` command recipes and source files; render only after trusting
@@ -22,8 +28,8 @@ keys, caches, original videos or old machine-bound revision receipts are include
 From the received directory (using the existing render environment):
 
 ```sh
-SCENE_FONT='Arial Unicode MS' python -m scene_production --scene-file scene.py --scene HandoffExample --timeline timeline.json --output-dir runs --quality qm --record-scene-frames
-python -m scene_production.revision capture --manifest scene.manifest.json --run runs/scene-EXACT/result.json --store versions
+SCENE_FONT='Arial Unicode MS' "$RECEIVER_PY" -I "$RECEIVER_LAUNCHER" render --scene-file scene.py --scene HandoffExample --timeline timeline.json --output-dir runs --quality qm --record-scene-frames
+"$RECEIVER_PY" -I "$RECEIVER_LAUNCHER" revision capture --manifest scene.manifest.json --run runs/scene-EXACT/result.json --store versions
 ```
 
 Replace the receipt path with the exact returned run directory. Keep baseline
@@ -34,11 +40,11 @@ after content edits. If a section gets longer, update the inspection timeline
 accordingly; it is NOT an animation driver. The tail duration stays five seconds.
 
 ```sh
-python -m scene_production.revision locate --baseline versions/version-EXACT/snapshot.json --target distinction --feedback 'the concrete request' --acknowledge tail
-python -m scene_production.revision apply --plan plan.json --edits edits.json
+"$RECEIVER_PY" -I "$RECEIVER_LAUNCHER" revision locate --baseline versions/version-EXACT/snapshot.json --target distinction --feedback 'the concrete request' --acknowledge tail
+"$RECEIVER_PY" -I "$RECEIVER_LAUNCHER" revision apply --plan plan.json --edits edits.json
 # render again, retaining the baseline
-python -m scene_production.revision audit --baseline versions/version-EXACT/snapshot.json --run runs/scene-CANDIDATE/result.json --target distinction
-python -m scene_production.revision verify --baseline versions/version-EXACT/snapshot.json --run runs/scene-CANDIDATE/result.json --target distinction
+"$RECEIVER_PY" -I "$RECEIVER_LAUNCHER" revision audit --baseline versions/version-EXACT/snapshot.json --run runs/scene-CANDIDATE/result.json --target distinction
+"$RECEIVER_PY" -I "$RECEIVER_LAUNCHER" revision verify --baseline versions/version-EXACT/snapshot.json --run runs/scene-CANDIDATE/result.json --target distinction
 ```
 
 `plan.json` must contain the actual locate output; edits.json maps only

@@ -311,6 +311,126 @@ class PortableTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "role"):
             self.export()
 
+    def test_rebased_prefix_refused_before_zipfile(self):
+        from scene_production import portable
+        import struct
+
+        self.export()
+        original = self.archive.read_bytes()
+        for prefix in (b"UNTRUSTED PREFIX\n", b"PK\x03\x04UNTRUSTED PREFIX\n"):
+            raw = bytearray(original)
+            end = len(raw) - 22
+            directory = struct.unpack_from("<L", raw, end + 16)[0]
+            count = struct.unpack_from("<H", raw, end + 10)[0]
+            cursor = directory
+            for _ in range(count):
+                offset = struct.unpack_from("<L", raw, cursor + 42)[0]
+                struct.pack_into("<L", raw, cursor + 42, offset + len(prefix))
+                name, extra, comment = struct.unpack_from("<HHH", raw, cursor + 28)
+                cursor += 46 + name + extra + comment
+            struct.pack_into("<L", raw, end + 16, directory + len(prefix))
+            self.archive.write_bytes(prefix + raw)
+            with (
+                self.subTest(prefix=prefix),
+                patch.object(portable.zipfile, "ZipFile", side_effect=AssertionError("parsed")),
+            ):
+                with self.assertRaisesRegex(ValueError, "prefix|header"):
+                    portable.inspect_bundle(self.archive)
+
+    def test_legacy_recipe_inventory_remains_readable(self):
+        from scene_production import portable
+
+        self.export()
+        with zipfile.ZipFile(self.archive) as z:
+            payloads = {name: z.read(name) for name in z.namelist()}
+        handoff = json.loads(payloads["handoff.json"])
+        del handoff["commands"]["receiving_launcher"]
+        handoff["commands"]["render"] = ["python", "-m", "scene_production", "--help"]
+        payloads["handoff.json"] = json.dumps(handoff).encode()
+        with zipfile.ZipFile(self.archive, "w") as z:
+            for name, raw in payloads.items():
+                z.writestr(name, raw)
+        self.assertEqual(portable.inspect_bundle(self.archive)["version"], 1)
+
+    def test_entry_budget_precedes_zipfile_directory_parsing(self):
+        from scene_production import portable
+
+        with zipfile.ZipFile(self.archive, "w") as z:
+            for n in range(1024):
+                z.writestr(str(n), b"")
+        with patch.object(portable.zipfile, "ZipFile", side_effect=AssertionError("parsed")):
+            with self.assertRaisesRegex(ValueError, "budget"):
+                portable.inspect_bundle(self.archive)
+
+    def test_false_small_entry_count_does_not_bypass_preparse_budget(self):
+        from scene_production import portable
+        import struct
+
+        with zipfile.ZipFile(self.archive, "w") as z:
+            for n in range(1024):
+                z.writestr(str(n), b"")
+        raw = bytearray(self.archive.read_bytes())
+        end = raw.rindex(b"PK\x05\x06")
+        struct.pack_into("<HH", raw, end + 8, 1, 1)
+        self.archive.write_bytes(raw)
+        with patch.object(portable.zipfile, "ZipFile", side_effect=AssertionError("parsed")):
+            with self.assertRaisesRegex(ValueError, "budget|directory"):
+                portable.inspect_bundle(self.archive)
+
+    def test_container_size_budget_precedes_zipfile_open(self):
+        from scene_production import portable
+
+        with self.archive.open("wb") as f:
+            f.truncate(72 * 1024 * 1024 + 1)
+        with patch.object(portable.zipfile, "ZipFile", side_effect=AssertionError("parsed")):
+            with self.assertRaisesRegex(ValueError, "budget"):
+                portable.inspect_bundle(self.archive)
+
+    def test_central_directory_size_budget_precedes_zipfile_open(self):
+        from scene_production import portable
+        import struct
+
+        self.export()
+        raw = bytearray(self.archive.read_bytes())
+        end = raw.rindex(b"PK\x05\x06")
+        struct.pack_into("<L", raw, end + 12, 2 * 1024 * 1024)
+        self.archive.write_bytes(raw)
+        with patch.object(portable.zipfile, "ZipFile", side_effect=AssertionError("parsed")):
+            with self.assertRaisesRegex(ValueError, "budget"):
+                portable.inspect_bundle(self.archive)
+
+    def test_ambiguous_end_record_in_comment_refused_before_zipfile(self):
+        from scene_production import portable
+        import struct
+
+        self.export()
+        raw = bytearray(self.archive.read_bytes())
+        end = raw.rindex(b"PK\x05\x06")
+        fake = struct.pack("<4s4H2LH", b"PK\x05\x06", 0, 0, 1024, 1024, 0, 0, 0)
+        comment = fake + b"trailing comment"
+        struct.pack_into("<H", raw, end + 20, len(comment))
+        self.archive.write_bytes(raw + comment)
+        with patch.object(portable.zipfile, "ZipFile", side_effect=AssertionError("parsed")):
+            with self.assertRaisesRegex(ValueError, "end|uncommented"):
+                portable.inspect_bundle(self.archive)
+
+    def test_zip64_locator_cannot_override_prevalidated_end_record(self):
+        from scene_production import portable
+        import struct
+
+        self.export()
+        with zipfile.ZipFile(self.archive) as z:
+            selected = [(i, z.read(i)) for i in z.infolist()]
+        locator = struct.pack("<4sLQL", b"PK\x06\x07", 0, 0, 1)
+        selected[-1][0].comment = locator
+        with zipfile.ZipFile(self.archive, "w") as z:
+            for info, raw in selected:
+                z.writestr(info, raw)
+        self.assertEqual(self.archive.read_bytes()[-42:-38], b"PK\x06\x07")
+        with patch.object(portable.zipfile, "ZipFile", side_effect=AssertionError("parsed")):
+            with self.assertRaisesRegex(ValueError, "ZIP64"):
+                portable.inspect_bundle(self.archive)
+
 
 if __name__ == "__main__":
     unittest.main()

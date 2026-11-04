@@ -14,6 +14,7 @@ import platform
 import re
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,8 @@ from . import pairs
 MAX_FILES = 128
 MAX_FILE_BYTES = 16 * 1024 * 1024
 MAX_TOTAL_BYTES = 64 * 1024 * 1024
+MAX_ARCHIVE_BYTES = 72 * 1024 * 1024
+MAX_DIRECTORY_BYTES = 1024 * 1024
 ROLES = {"source", "subtitle", "asset", "config", "documentation"}
 RESERVED = {"handoff.json", "project.json"}
 
@@ -223,10 +226,20 @@ def export_project(spec_path, output):
             "portable_module_sha256": _sha(Path(__file__).read_bytes()),
         },
         "commands": {
+            "receiving_launcher": {
+                "file_from_trusted_product": "scene_production/launcher.py",
+                "argv_placeholder": "<TRUSTED_LAUNCHER>",
+                "required_python_option": "-I",
+                "notice": (
+                    "Resolve <TRUSTED_LAUNCHER> from the trusted product before using recipes; "
+                    "never use an imported project script."
+                ),
+            },
             "render": [
                 "python",
-                "-m",
-                "scene_production",
+                "-I",
+                "<TRUSTED_LAUNCHER>",
+                "render",
                 "--scene-file",
                 str(PurePosixPath(spec["manifest"]).parent / entry["source"]),
                 "--scene",
@@ -259,7 +272,61 @@ def export_project(spec_path, output):
     return handoff
 
 
+def _archive_budget(path):
+    """Bound ZIP metadata work before ZipFile constructs its entry objects.
+
+    This small-project format needs one ordinary central directory, not split
+    volumes, ZIP64 end records, archive comments, prefixes or trailing material.
+    An uncommented final record uses the same ZipFile fast-path selection.
+    """
+    path = Path(path)
+    metadata = path.stat()
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_ARCHIVE_BYTES:
+        raise ValueError("archive container exceeds regular-file / 72 MiB budget")
+    with path.open("rb") as source:
+        if source.read(4) != b"PK\x03\x04":
+            raise ValueError("archive requires an initial local header; prefixes are refused")
+        size = metadata.st_size
+        source.seek(max(0, size - 42))
+        footer = source.read(42)
+        if len(footer) >= 42 and footer[:4] == b"PK\x06\x07":
+            raise ValueError("ZIP64 end-directory locators are outside this project format")
+        end = footer[-22:]
+        if len(end) != 22 or end[:4] != b"PK\x05\x06":
+            raise ValueError("project archive requires an ordinary uncommented ZIP end record")
+        record = struct.unpack("<4s4H2LH", end)
+        if record[-1] != 0:
+            raise ValueError("project archive requires an uncommented ZIP end record")
+        _, disk, directory_disk, disk_count, count, length, offset, _ = record
+        if count > MAX_FILES + 2 or length > MAX_DIRECTORY_BYTES:
+            raise ValueError("archive directory exceeds preparse count/size budget")
+        absolute_end = size - 22
+        if disk or directory_disk or disk_count != count or offset + length != absolute_end:
+            raise ValueError("unsupported archive end-directory layout")
+        source.seek(offset)
+        directory = source.read(length)
+    cursor = entries = 0
+    first_local_header = None
+    while cursor < len(directory):
+        if directory[cursor : cursor + 4] != b"PK\x01\x02" or cursor + 46 > len(directory):
+            raise ValueError("invalid archive central directory")
+        local_header = struct.unpack_from("<L", directory, cursor + 42)[0]
+        first_local_header = (
+            local_header if first_local_header is None else min(first_local_header, local_header)
+        )
+        name, extra, comment = struct.unpack_from("<HHH", directory, cursor + 28)
+        cursor += 46 + name + extra + comment
+        entries += 1
+        if entries > MAX_FILES + 2:
+            raise ValueError("archive directory exceeds preparse entry budget")
+    if cursor != len(directory) or entries != count:
+        raise ValueError("archive directory length/count mismatch")
+    if first_local_header != 0:
+        raise ValueError("first referenced local header must start at zero; prefixes are refused")
+
+
 def _archive(path):
+    _archive_budget(path)
     try:
         with zipfile.ZipFile(path) as archive:
             infos = archive.infolist()
