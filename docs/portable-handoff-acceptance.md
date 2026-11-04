@@ -1,7 +1,13 @@
 # Portable handoff MVP acceptance (2026-11-03)
 
-Base: remote master f697ffa89f8bf995ac20324bc639dc6ba62e37e0. No renderer or
-revision implementation changed in this iteration. A fresh-context receiving
+This page records the original MVP experiment based on master
+f697ffa89f8bf995ac20324bc639dc6ba62e37e0. No renderer or revision implementation
+changed during that original experiment. The later safety follow-up in PR #21
+changes traced-render subprocess startup to an isolated trusted launcher; its
+separate final-wheel render and CI validation are described in the PR. The
+17-to-19-second edit/replay experiment below was not repeated by that follow-up.
+
+A fresh-context receiving
 agent received only a local wheel, project ZIP, commands and a concrete request:
 make scene `distinction` explain content edits versus inspection-time edits with
 two visible paths, preserving setup/tail and the blue dot.
