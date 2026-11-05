@@ -70,3 +70,26 @@ and pre-encoding RGBA hashes; traced previews select exact decoded frame indices
 See [scene revision usage and limits](scene-revision.md) and the
 [controlled experiment evidence](scene-revision-experiments.md). Ordinary rendering
 remains the default, and machine checks do not establish semantic correctness.
+
+
+The trusted isolated launcher also exposes the existing inspection operation:
+
+```sh
+python -I /trusted/product/scene_production/launcher.py inspect \
+  --from-run /your/run/result.json --timeline corrected.json --output-dir reinspection
+```
+
+It delegates to the same recorded-video inspector, retains the original video
+identity and does not render the Scene. Review local source before explicitly
+rendering; isolated bootstrap is not a Python sandbox.
+
+### Failed scene-font selection
+
+For the known `scene_font` failures (explicit font absent or missing required
+characters), rendering still fails and preserves its receipt and full render log.
+The CLI adds a fixed font-selection hint from the final exception line and names
+`render.log`; it does not dump arbitrary subprocess output or change the font.
+The hint reads at most the final 64KiB, removes ANSI CSI colour/control sequences and does
+not echo the supplied font/log value. It is a hint from untrusted output, not a
+certified root cause. Other exceptions, incomplete logs, cancellation and timeout
+retain their existing failure behavior. Inspect the preserved log if no hint fits.

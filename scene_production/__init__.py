@@ -23,6 +23,29 @@ from app.render.runner import RenderRunner
 from app.scenes.discovery import _discover_from_tree
 
 
+def _font_failure_hint(log_path):
+    """Recognize a final font exception; never echo arbitrary subprocess log text.
+
+    This is an untrusted-log hint, not a certified diagnosis or automatic repair.
+    Keep the original log for errors outside these known scene-font failures.
+    """
+    try:
+        with log_path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            handle.seek(max(0, handle.tell() - 65536))
+            text = handle.read(65536).decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    last = lines[-1] if lines else ""
+    if last.startswith("ValueError: SCENE_FONT has missing glyphs: "):
+        return "selected font lacks required glyphs; choose a covering font with SCENE_FONT"
+    if last.startswith("ValueError: SCENE_FONT is not installed: "):
+        return "selected font is not installed; choose an installed font with SCENE_FONT"
+    return None
+
+
 def number(value):
     if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
         raise ValueError("times must be finite nonnegative numbers, excluding bool")
@@ -414,7 +437,11 @@ def render(
         if event.is_set():
             raise RuntimeError("render timed out or cancelled")
         if outcome.outcome != JobOutcome.SUCCESS or outcome.return_code != 0:
-            raise RuntimeError("render failed: " + str(outcome))
+            message = "render failed: " + str(outcome)
+            hint = _font_failure_hint(run / "render.log")
+            if hint:
+                message += "\nfont hint (from render log): " + hint
+            raise RuntimeError(message)
         stage = "provenance"
         if source.read_bytes() != raw_source:
             raise RuntimeError("source changed during render")

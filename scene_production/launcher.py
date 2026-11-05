@@ -25,13 +25,15 @@ def main():
         from scene_production.revision import main as run
     elif command == "capture":
         from scene_production.frame_capture import main as run
-    elif command == "render":
+    elif command in ("render", "inspect"):
         from scene_production.__main__ import main as run
     else:
-        message = "Commands: portable, revision, render, capture"
+        message = "Commands: portable, revision, render, inspect, capture"
         print(message, file=sys.stdout if command == "--help" else sys.stderr)
         return 0 if command == "--help" else 2
-    sys.argv = [sys.argv[0], *sys.argv[2:]]
+    # The production parser owns its existing inspect subcommand.
+    first_argument = 1 if command == "inspect" else 2
+    sys.argv = [sys.argv[0], *sys.argv[first_argument:]]
     return run()
 
 

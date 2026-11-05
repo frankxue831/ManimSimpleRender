@@ -85,3 +85,23 @@ class ReceiverLauncherTests(unittest.TestCase):
             )
         self.assertEqual(result.returncode, 2)
         self.assertIn("-I", result.stderr)
+
+
+class ReinspectionLauncherTests(unittest.TestCase):
+    def test_inspect_help_uses_reinspection_parser_without_project_imports(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            for name in ("scene_production.py", "platform.py", "sitecustomize.py"):
+                (root / name).write_text("from pathlib import Path\nPath('EXECUTED').touch()\n")
+            result = subprocess.run(
+                [sys.executable, "-I", str(LAUNCHER), "inspect", "--help"],
+                cwd=root,
+                env={"PATH": os.defpath, "PYTHONPATH": str(root)},
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("--from-run", result.stdout)
+            self.assertNotIn("--scene-file", result.stdout)
+            self.assertFalse((root / "EXECUTED").exists())

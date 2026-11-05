@@ -2,6 +2,7 @@
 
 import argparse
 import json
+from pathlib import Path
 import sys
 from . import render
 
@@ -10,6 +11,12 @@ def _error(exc):
     print(str(exc), file=sys.stderr)
     if getattr(exc, "receipt_path", None):
         print("receipt: " + str(exc.receipt_path), file=sys.stderr)
+        try:
+            log = Path(exc.receipt_path).with_name("render.log")
+            if log.is_file():
+                print("render log: " + str(log), file=sys.stderr)
+        except (OSError, ValueError):
+            pass
 
 
 def main():
