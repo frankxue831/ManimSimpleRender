@@ -71,3 +71,7 @@ success does not establish conceptual or visual quality. Review is sampled unles
 someone actually watches the full video; report that limit accurately. Keep media,
 local receipts, hashes and private QA outside Git. Change scene content by
 rerendering; use `inspect` only for the unchanged recorded video.
+
+
+For existing generated diagram motion, see [identity and path guards](diagram-motion.md).
+These guards do not automatically apply to arbitrary ordinary Scenes.

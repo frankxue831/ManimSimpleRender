@@ -12,7 +12,7 @@ from explainer.codegen.common import (
     badge_lines,
     cite_basename,
 )
-from explainer.codegen.manim_codegen import RevealStep
+from explainer.codegen.manim_codegen import CodegenError, RevealStep
 from explainer.storyboard.diagram_layout import bow_control_points, resolve_anchor
 
 
@@ -150,21 +150,28 @@ def emit_diagram(beat, storyboard):
     if has_motion:
         p0 = _endpoint_xy(dia.path.frm)
         p3 = _endpoint_xy(dia.path.to)
+        if pos[dia.motion.node] != p0:
+            raise CodegenError(
+                f"beat {beat.id!r}: moving node must be at the path start; "
+                "change its anchor or the path's from endpoint"
+            )
         c1, c2 = bow_control_points(p0, p3, dia.path.bow)
         pcolor = resolve_color(dia.path.color, "#2DD4BF")
         setup.append(
             f"{INDENT}path = CubicBezier({_point(*p0)}, {_point(*c1)}, "
-            f"{_point(*c2)}, {_point(*p3)}).set_stroke(color={_s(pcolor)}, width=5)"
+            f"{_point(*c2)}, {_point(*p3)}).set_stroke(color={_s(pcolor)}, width=5).set_z_index(-1)"
         )
         move_idx = [n.id for n in dia.nodes].index(dia.motion.node)
         node_var = f"node{move_idx}"
         prep_plays = []
+        # Preserve an explicitly named target, not an arbitrary nearby glyph.
+        focus_ids = {dia.motion.node, dia.path.to.node}
         # Dim the non-moving glyphs. Use set_stroke for stroke-only shapes
         # (ring/box/edges): set_opacity would also set fill opacity, ballooning a
         # ring into a disc or a curved arrow into a filled blob. A filled dot dims
         # via opacity. Labels (Text) dim via opacity safely.
         for i, n in enumerate(dia.nodes):
-            if i == move_idx:
+            if n.id in focus_ids:
                 continue
             v = f"node{i}"
             prep_plays.append(
