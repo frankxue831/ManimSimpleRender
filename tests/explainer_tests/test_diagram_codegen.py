@@ -1,5 +1,6 @@
 """Tests for diagram codegen: the emitted scene must compile and stage right."""
 
+import importlib.util
 import unittest
 
 from explainer.codegen.manim_codegen import generate_scene
@@ -51,6 +52,7 @@ class DiagramFullEmitTests(unittest.TestCase):
             nodes=(
                 DiaNode(id="agent", shape="dot", at="left", label="agent"),
                 DiaNode(id="goal", shape="ring", at="right", label="goal", color="gold"),
+                DiaNode(id="context", shape="ring", at="lower-center", label="context"),
             ),
             edges=(
                 DiaEdge(
@@ -70,6 +72,17 @@ class DiagramFullEmitTests(unittest.TestCase):
         )
         return generate_scene(_sb(dia), scene_name="Full")
 
+    def test_direct_typed_storyboard_cannot_bypass_motion_start_check(self):
+        from explainer.codegen.manim_codegen import CodegenError
+
+        diagram = Diagram(
+            nodes=(DiaNode(id="job", shape="dot", at="left", label="job7"),),
+            path=DiaPath(frm=Endpoint(anchor="center"), to=Endpoint(anchor="right")),
+            motion=DiaMotion(node="job"),
+        )
+        with self.assertRaisesRegex(CodegenError, "path start"):
+            generate_scene(_sb(diagram))
+
     def test_full_diagram_compiles(self):
         compile(self._full(), "<full>", "exec")
 
@@ -82,12 +95,14 @@ class DiagramFullEmitTests(unittest.TestCase):
 
     def test_static_nodes_dim_during_motion(self):
         src = self._full()
-        # the non-moving ring node (goal = node1) dims via STROKE (set_opacity would
-        # fill the ring into a disc); a stroke-only edge dims the same way.
-        self.assertIn("node1.animate.set_stroke(opacity=0.3)", src)
+        # The named goal stays visible; other context dims via STROKE, without
+        # filling a ring or edge into a solid shape.
+        self.assertNotIn("node1.animate.set_stroke(opacity=0.3)", src)
+        self.assertNotIn("node1_label.animate.set_opacity(0.3)", src)
+        self.assertIn("node2.animate.set_stroke(opacity=0.3)", src)
         self.assertIn("edge0.animate.set_stroke(opacity=0.3)", src)
         self.assertNotIn("edge0.animate.set_opacity(0.3)", src)
-        # the moving node's label is faded so it does not orphan
+        # Keep the existing label FadeOut until tracking layout is separately ready.
         self.assertIn("FadeOut(node0_label)", src)
 
     def test_node_and_edge_labels_fade_in_not_write(self):
@@ -154,3 +169,82 @@ class DiagramFullEmitTests(unittest.TestCase):
         )
         src = generate_scene(_sb(dia))
         self.assertIn("#3FB950", src)  # Theme().accent_confirmed
+
+
+@unittest.skipUnless(
+    importlib.util.find_spec("manim"), "existing Manim needed for generated geometry"
+)
+class DiagramLayeringRuntimeTests(unittest.TestCase):
+    """Optional actual Manim geometry; no voice service or Scene execution."""
+
+    def _setup(self, *, labeled=True, named_destination=True):
+        import importlib.util
+
+        if importlib.util.find_spec("manim") is None:
+            self.skipTest("existing Manim needed for generated geometry")
+        import manim
+        from explainer.codegen.diagram_codegen import emit_diagram
+
+        diagram = Diagram(
+            nodes=(
+                DiaNode(
+                    id="job",
+                    shape="dot",
+                    at="left",
+                    label="job 7" if labeled else "",
+                ),
+                DiaNode(
+                    id="worker",
+                    shape="ring",
+                    at="right",
+                    label="worker",
+                ),
+            ),
+            path=DiaPath(
+                frm=Endpoint(node="job"),
+                to=Endpoint(node="worker") if named_destination else Endpoint(anchor="right"),
+                bow="up",
+            ),
+            motion=DiaMotion(node="job"),
+        )
+        board = _sb(diagram)
+        setup, steps = emit_diagram(board.beats[0], board)
+        namespace = dict(vars(manim))
+        source = "def build():\n" + "\n".join(setup) + "\n        return locals()\n"
+        exec(compile(source, "<fixed diagram emitter>", "exec"), namespace)
+        return namespace["build"](), steps, namespace
+
+    def test_preparation_keeps_named_destination_and_label_authored_opacity(self):
+        from manim.animation.animation import prepare_animation
+
+        geometry, steps, namespace = self._setup()
+        for expression in steps[-2].plays:
+            animation = prepare_animation(eval(expression, namespace, geometry))
+            animation.begin()
+            animation.interpolate(1)
+            animation.finish()
+        self.assertAlmostEqual(geometry["node1"].get_stroke_opacity(), 1)
+        label_members = geometry["node1_label"].family_members_with_points()
+        self.assertTrue(label_members)
+        self.assertTrue(all(member.get_fill_opacity() == 1 for member in label_members))
+
+    def test_anchor_endpoint_does_not_guess_a_nearby_destination_identity(self):
+        from manim.animation.animation import prepare_animation
+
+        geometry, steps, namespace = self._setup(named_destination=False)
+        for expression in steps[-2].plays:
+            animation = prepare_animation(eval(expression, namespace, geometry))
+            animation.begin()
+            animation.interpolate(1)
+            animation.finish()
+        self.assertAlmostEqual(geometry["node1"].get_stroke_opacity(), 0.3)
+
+    def test_motion_guide_cannot_cover_the_solid_actor(self):
+        geometry, _, _ = self._setup()
+        self.assertLess(geometry["path"].z_index, geometry["node0"].z_index)
+        self.assertLess(geometry["path"].z_index, geometry["node0_label"].z_index)
+
+    def test_unlabeled_motion_does_not_reference_an_undefined_label(self):
+        geometry, steps, namespace = self._setup(labeled=False)
+        self.assertNotIn("node0_label", geometry)
+        self.assertEqual(steps[-1].plays, ["MoveAlongPath(node0, path)"])

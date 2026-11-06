@@ -111,6 +111,24 @@ class DiagramValidationTests(unittest.TestCase):
             "path",
         )
 
+    def test_motion_cannot_teleport_from_a_different_path_start(self):
+        self._bad(
+            "nodes:\n  - {id: a, shape: dot, at: left}\n"
+            "path: {from: {anchor: center}, to: {anchor: right}}\n"
+            "motion: {node: a}",
+            "path start",
+        )
+
+    def test_motion_can_use_an_equivalent_anchor_start(self):
+        value = _load(
+            _diagram(
+                "nodes:\n  - {id: a, shape: dot, at: left}\n"
+                "path: {from: {anchor: left}, to: {anchor: right}}\n"
+                "motion: {node: a}"
+            )
+        )
+        self.assertEqual(value.beats[0].canvas.diagram.motion.node, "a")
+
     def test_motion_node_not_dot_rejected(self):
         self._bad(
             "nodes:\n  - {id: a, shape: ring, at: left}\n  - {id: b, shape: dot, at: right}\n"

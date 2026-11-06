@@ -533,6 +533,12 @@ def _parse_diagram(spec, beat_id) -> Diagram:
             raise StoryboardError(f"beat {beat_id!r}: motion node {node_id!r} must be a dot")
         if path is None:
             raise StoryboardError(f"beat {beat_id!r}: motion needs a path")
+        path_start = resolve_anchor(by_id[path.frm.node].at if path.frm.node else path.frm.anchor)
+        if resolve_anchor(by_id[node_id].at) != path_start:
+            raise StoryboardError(
+                f"beat {beat_id!r}: motion node {node_id!r} must be at the path start; "
+                "change its anchor or the path's from endpoint"
+            )
         motion = DiaMotion(node=node_id, narration=str(m.get("narration", "") or "").strip())
 
     points = [(n.id, resolve_anchor(n.at)) for n in nodes]
