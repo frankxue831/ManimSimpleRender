@@ -224,9 +224,14 @@ class Ledger:
             return dict(
                 task=task,
                 attempts=self.list_attempts(task_id),
+                resolutions=self.list_resolutions(task_id),
                 authorization=self.get_authorization(task["authorization_id"]),
                 predecessors=[
-                    dict(task=self.get_task(d), attempts=self.list_attempts(d))
+                    dict(
+                        task=self.get_task(d),
+                        attempts=self.list_attempts(d),
+                        resolutions=self.list_resolutions(d),
+                    )
                     for d in task["depends_on"]
                 ],
             )
@@ -236,8 +241,20 @@ class Ledger:
         reason = self._block(task)
         return dict(task, eligible=reason is None, blocked_reason=reason)
 
-    def list_tasks(self):
-        return [self.get_task(t["task_id"]) for t in self._all("task")]
+    def list_tasks(self, owner=None, eligible_only=False):
+        if owner is not None and not _text(owner):
+            raise LedgerError("Owner must be a nonempty string")
+        if not isinstance(eligible_only, bool):
+            raise LedgerError("Eligibility filter must be boolean")
+        # A consistent current-state scan does not depend on inbox ACK state.
+        # It is advisory: claim still rechecks eligibility transactionally.
+        with self._transaction():
+            tasks = [
+                self.get_task(t["task_id"])
+                for t in self._all("task")
+                if owner is None or t["owner"] == owner
+            ]
+        return [t for t in tasks if not eligible_only or t["eligible"]]
 
     def get_attempt(self, attempt_id):
         return self._get("attempt", attempt_id)
@@ -255,6 +272,20 @@ class Ledger:
             raise LedgerError("Lease duration must be finite and positive")
 
     def claim(self, task_id, worker_id, authorization_revision, lease_seconds=60):
+        return self._claim(task_id, worker_id, authorization_revision, lease_seconds)
+
+    def claim_local_render(self, task_id, worker_id, authorization_revision, lease_seconds=60):
+        """Only the fixed local runner may use this execution lifecycle contract.
+
+        Every launch MUST first commit begin_execution. Direct/external claims
+        have no such guard and are deliberately ineligible for slot recovery.
+        """
+        from .execution_identity import local_execution_identity
+
+        guard = dict(version=1, state="not_started", identity=local_execution_identity())
+        return self._claim(task_id, worker_id, authorization_revision, lease_seconds, guard)
+
+    def _claim(self, task_id, worker_id, authorization_revision, lease_seconds, guard=None):
         self._duration(lease_seconds)
         if type(authorization_revision) is not int or authorization_revision < 1:
             raise LedgerError("Revision must be a positive integer")
@@ -262,6 +293,8 @@ class Ledger:
             raise LedgerError("Worker required")
         with self._transaction():
             task = self._get("task", task_id)
+            if guard is not None and (task["kind"], task["action"]) != ("render", "render"):
+                raise LedgerError("Local execution guard requires a render task")
             auth = self._get("auth", task["authorization_id"])
             if self._block(task) or auth["revision"] != authorization_revision:
                 raise LedgerError("Task is not eligible or authorization is stale")
@@ -277,10 +310,44 @@ class Ledger:
                 authorization_id=auth["authorization_id"],
                 authorization_revision=auth["revision"],
             )
+            if guard is not None:
+                attempt["execution_guard"] = guard
             self._put("attempt", attempt["attempt_id"], attempt, new=True)
             self._put("task", task_id, task)
             self._event(task, "claimed", attempt["attempt_id"])
             self._notify_ready()
+        return attempt
+
+    def begin_execution(self, attempt_id, fence):
+        """Irreversible spawn intent, committed BEFORE the local runner spawns."""
+        from .execution_identity import local_execution_identity, validate_identity
+
+        with self._transaction():
+            attempt, task = self._active(attempt_id, fence)
+            guard = attempt.get("execution_guard")
+            if (
+                task["kind"] != "render"
+                or not isinstance(guard, dict)
+                or set(guard) != {"version", "state", "identity"}
+                or type(guard.get("version")) is not int
+                or guard["version"] != 1
+                or guard.get("state") != "not_started"
+                or self._get("auth", task["authorization_id"])["status"] != "active"
+            ):
+                raise LedgerError("Local execution cannot start")
+            # Capture the execution machine/boot at this gate, not just claim
+            # time. A replayed old-boot guard must not label a new local launch.
+            current_identity = local_execution_identity()
+            if (
+                validate_identity(guard["identity"])
+                and validate_identity(current_identity)
+                and guard["identity"] != current_identity
+            ):
+                raise LedgerError("Execution machine or boot changed after claim")
+            guard["identity"] = current_identity
+            self._active(attempt_id, fence)
+            guard["state"] = "spawn_intent"
+            self._put("attempt", attempt_id, attempt)
         return attempt
 
     def _active(self, attempt_id, fence):
@@ -351,6 +418,114 @@ class Ledger:
                     expired.append(attempt)
             self._notify_ready()
         return expired
+
+    def get_resolution(self, resolution_id):
+        return self._get("resolution", resolution_id)
+
+    def list_resolutions(self, task_id=None):
+        return [r for r in self._all("resolution") if task_id is None or r["task_id"] == task_id]
+
+    def resolve_unknown(self, data):
+        """Audit abandonment, never adopt success or authorize another attempt.
+
+        Text supplied by an operator is context, NOT proof of stopped execution.
+        Only an unused fenced launch gate or a verified local host reboot can
+        release a render slot. Other unknowns deliberately remain blocked.
+        """
+        from .execution_identity import local_execution_identity, validate_identity
+
+        text_fields = (
+            "resolution_id",
+            "task_id",
+            "attempt_id",
+            "operator",
+            "source_ref",
+            "reason",
+        )
+        fields = set(text_fields) | {"expected_fence", "decision", "evidence_refs"}
+        if (
+            not isinstance(data, dict)
+            or set(data) != fields
+            or any(not _text(data.get(k)) for k in text_fields)
+            or type(data["expected_fence"]) is not int
+            or data["expected_fence"] < 1
+            or data["decision"] != "abandon"
+            or not isinstance(data["evidence_refs"], list)
+            or not data["evidence_refs"]
+            or any(not _text(v) for v in data["evidence_refs"])
+        ):
+            raise LedgerError("Complete audit context and abandonment decision required")
+        with self._transaction():
+            prior = next(
+                (r for r in self._all("resolution") if r["resolution_id"] == data["resolution_id"]),
+                None,
+            )
+            if prior is not None:
+                if prior["request"] != data:
+                    raise LedgerError("Resolution ID already used with different context")
+                return prior
+            task = self._get("task", data["task_id"])
+            attempt = self._get("attempt", data["attempt_id"])
+            if (
+                task["kind"] != "render"
+                or task["status"] != "unknown"
+                or attempt["status"] != "unknown"
+                or attempt["task_id"] != task["task_id"]
+                or task["fence"] != data["expected_fence"]
+            ):
+                raise LedgerError("Unknown render and current task fence required")
+            guard = attempt.get("execution_guard")
+            if (
+                not isinstance(guard, dict)
+                or set(guard) != {"version", "state", "identity"}
+                or type(guard.get("version")) is not int
+                or guard["version"] != 1
+            ):
+                raise LedgerError("No supported execution guard")
+            # Kernel identity is independently read while holding the same CAS
+            # transaction, never taken from the operator's request or evidence.
+            current_identity = (
+                local_execution_identity() if guard.get("state") == "spawn_intent" else None
+            )
+            if guard.get("state") == "not_started":
+                proof = {"kind": "fenced_before_spawn_intent"}
+            elif (
+                guard.get("state") == "spawn_intent"
+                and validate_identity(guard.get("identity"))
+                and validate_identity(current_identity)
+                and guard["identity"]["platform"] == current_identity["platform"]
+                and guard["identity"]["host"] == current_identity["host"]
+                and guard["identity"]["boot"] != current_identity["boot"]
+            ):
+                proof = dict(
+                    kind="same_host_reboot",
+                    previous_identity=guard["identity"],
+                    current_identity=current_identity,
+                )
+            else:
+                raise LedgerError("Stopped local execution cannot be established")
+            resolution = dict(
+                resolution_id=data["resolution_id"],
+                task_id=task["task_id"],
+                attempt_id=attempt["attempt_id"],
+                request=data,
+                proof=proof,
+                created_at=self.clock(),
+                previous_task_status=task["status"],
+                previous_fence=task["fence"],
+                resulting_fence=task["fence"] + 1,
+                authorization=self._get("auth", task["authorization_id"]),
+            )
+            task.update(
+                status="abandoned",
+                fence=task["fence"] + 1,
+                resolution_id=data["resolution_id"],
+            )
+            self._put("resolution", data["resolution_id"], resolution, new=True)
+            self._put("task", task["task_id"], task)
+            self._event(task, "abandoned", attempt["attempt_id"])
+            self._notify_ready()
+        return resolution
 
     def pending_events(self, owner):
         return [e for e in self._all("event") if e["owner"] == owner and not e["acknowledged"]]

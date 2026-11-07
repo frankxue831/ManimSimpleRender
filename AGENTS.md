@@ -59,7 +59,10 @@ queue, approval system, automatic retry service, or semantic review.
 authorization evidence, leased/fenced claims, and a durable local pull inbox.
 It never sends external messages, authenticates approval, automatically retries,
 or treats task completion as semantic review. Unknown render attempts remain
-blocked for operator investigation. Read `docs/agent-handoff.md` before changes.
+blocked for operator investigation. Audited abandonment can release a slot only
+with the supported local launch-gate or same-host reboot proof; it never adopts
+success or retries. Consumers must scan durable task state as well as events.
+Read `docs/agent-handoff.md` before changes.
 
 Keep these modules Qt-free and preserve public production/revision/portable
 behavior. Image2 output patterns must be fixed relative names with an explicit

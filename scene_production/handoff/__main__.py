@@ -21,13 +21,16 @@ def _parser():
     commands = parser.add_subparsers(dest="command", required=True, parser_class=_Parser)
     commands.add_parser("describe")
     commands.add_parser("init")
-    commands.add_parser("tasks")
+    tasks = commands.add_parser("tasks")
+    tasks.add_argument("--owner")
+    tasks.add_argument("--eligible", action="store_true")
     commands.add_parser("reconcile")
-    for name in ("authorization-add", "task-add"):
+    for name in ("authorization-add", "task-add", "resolve-unknown"):
         commands.add_parser(name).add_argument("--input", required=True)
-    for name in ("task", "handoff", "authorization", "attempt"):
+    for name in ("task", "handoff", "authorization", "attempt", "resolution"):
         commands.add_parser(name).add_argument("--id", required=True)
     commands.add_parser("attempts").add_argument("--task-id")
+    commands.add_parser("resolutions").add_argument("--task-id")
     revoke = commands.add_parser("authorization-revoke")
     revoke.add_argument("--id", required=True)
     revoke.add_argument("--source-ref", required=True)
@@ -47,6 +50,10 @@ def _parser():
     finish.add_argument("--fence", type=int, required=True)
     finish.add_argument("--status", choices=("succeeded", "failed", "unknown"), required=True)
     finish.add_argument("--input", required=True)
+    heartbeat = commands.add_parser("heartbeat-manual")
+    heartbeat.add_argument("--attempt-id", required=True)
+    heartbeat.add_argument("--fence", type=int, required=True)
+    heartbeat.add_argument("--lease-seconds", default=60, type=float)
     return parser
 
 
@@ -77,11 +84,15 @@ def describe():
             "attempt",
             "attempts",
             "claim-manual",
+            "heartbeat-manual",
             "finish-manual",
             "run",
             "events",
             "ack",
             "reconcile",
+            "resolve-unknown",
+            "resolution",
+            "resolutions",
         ],
         "authorization_required": [
             "authorization_id",
@@ -104,12 +115,36 @@ def describe():
             "depends_on",
             "payload",
         ],
-        "trust": "Stored user-message provenance is caller asserted, not authenticated. "
+        "resolution_required": [
+            "resolution_id",
+            "task_id",
+            "attempt_id",
+            "expected_fence=current task fence, positive integer",
+            "operator",
+            "source_ref",
+            "reason",
+            "evidence_refs=nonempty list of strings",
+            "decision=abandon",
+        ],
+        "trust": "Stored user-message provenance and local owner/worker/operator names "
+        "are caller asserted, not authenticated. "
         "Verify the original source, current restrictions and runtime permission before claiming.",
         "notifications": "events is a durable local pull inbox. Polling is not delivery or ACK. "
         "ack records the named owner's explicit receipt, not review approval.",
+        "consumer": "On startup, reconnect and each processing cycle, scan tasks --owner NAME "
+        "--eligible even when events is empty. ACK and claim are separate transactions. "
+        "Fetch handoff, verify original authorization and current restrictions, then claim. "
+        "Owner filters select records, not authenticated access. A scan does not reserve work. "
+        "Also scan owned tasks without --eligible to inspect blocked dependencies.",
+        "manual_lease": "heartbeat-manual renews a running manual attempt using its attempt_id "
+        "and fence before lease expiry. It rejects render tasks and stale attempts. "
+        "run maintains render heartbeats; no automatic manual heartbeat is installed.",
         "recovery": "reconcile fences expired attempts as unknown, never retries. "
-        "Unknown render attempts keep the local render slot. Operator investigation is required.",
+        "resolve-unknown accepts only audited abandonment of supported unknown render tasks, "
+        "never success, retry or restored authority; original unknown attempts remain unchanged. "
+        "Slot release requires a fenced unused launch gate, or an independently verified "
+        "same-host changed boot identity. Operator assertions alone cannot release it. "
+        "Manual, legacy and same-boot started unknowns remain blocked.",
         "review": "Task completion is not semantic acceptance, publication approval "
         "or release eligibility.",
         "exit_codes": {
@@ -133,13 +168,19 @@ def _dispatch(ledger, args):
     if command == "task":
         return ledger.get_task(args.id)
     if command == "tasks":
-        return ledger.list_tasks()
+        return ledger.list_tasks(owner=args.owner, eligible_only=args.eligible)
     if command == "handoff":
         return ledger.get_handoff(args.id)
     if command == "attempt":
         return ledger.get_attempt(args.id)
     if command == "attempts":
         return ledger.list_attempts(args.task_id)
+    if command == "resolve-unknown":
+        return ledger.resolve_unknown(_input(args.input))
+    if command == "resolution":
+        return ledger.get_resolution(args.id)
+    if command == "resolutions":
+        return ledger.list_resolutions(args.task_id)
     if command == "events":
         return ledger.pending_events(args.owner)
     if command == "ack":
@@ -157,6 +198,11 @@ def _dispatch(ledger, args):
         if ledger.get_task(attempt["task_id"])["kind"] != "manual":
             raise LedgerError("Render outcomes require the runner")
         return ledger.finish(args.attempt_id, args.fence, args.status, _input(args.input))
+    if command == "heartbeat-manual":
+        attempt = ledger.get_attempt(args.attempt_id)
+        if ledger.get_task(attempt["task_id"])["kind"] != "manual":
+            raise LedgerError("Render heartbeats require the runner")
+        return ledger.heartbeat(args.attempt_id, args.fence, args.lease_seconds)
     if command == "run":
         from .runner import run_task
 

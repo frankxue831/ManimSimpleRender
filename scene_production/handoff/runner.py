@@ -200,7 +200,9 @@ def run_task(
     ):
         raise ValueError("poll_interval must be finite and positive")
     _arguments(task["payload"], Path("unused"))
-    claim = ledger.claim(task_id, worker_id, authorization_revision, lease_seconds=lease_seconds)
+    claim = ledger.claim_local_render(
+        task_id, worker_id, authorization_revision, lease_seconds=lease_seconds
+    )
     attempt_id, fence = claim["attempt_id"], claim["fence"]
     directory = Path(ledger.directory).resolve() / "outputs" / attempt_id
     process = None
@@ -219,6 +221,9 @@ def run_task(
         directory.mkdir(mode=0o700)
         args = _arguments(task["payload"], directory / "agent")
         ledger.heartbeat(attempt_id, fence, lease_seconds=lease_seconds)
+        # Commit the one-way launch gate before Popen. A fenced worker cannot
+        # launch after a never-started attempt has been abandoned by recovery.
+        ledger.begin_execution(attempt_id, fence)
         process = subprocess.Popen(
             args,
             cwd=Path(agent.__file__).resolve().parent.parent,

@@ -51,7 +51,7 @@ class HandoffCliTests(unittest.TestCase):
             ),
         )
 
-    def task(self, name, depends=(), kind="manual"):
+    def task(self, name, depends=(), kind="manual", owner=None):
         return self.call(
             "task-add",
             "--input",
@@ -60,7 +60,7 @@ class HandoffCliTests(unittest.TestCase):
                 {
                     "task_id": name,
                     "title": name,
-                    "owner": name + "-owner",
+                    "owner": owner or name + "-owner",
                     "kind": kind,
                     "action": "draft" if kind == "manual" else "render",
                     "resource": "demo-v1",
@@ -118,6 +118,119 @@ class HandoffCliTests(unittest.TestCase):
         self.assertNotIn("never-echo", str(result))
         self.call("init", expected=1)
 
+    def test_task_scan_filters_owner_and_current_eligibility(self):
+        self.authorize()
+        self.task("draft", owner="writer")
+        self.task("later", ["draft"], owner="writer")
+        self.task("other", owner="another-writer")
+        self.assertEqual(len(self.call("tasks")["result"]), 3)
+        owned = self.call("tasks", "--owner", "writer")["result"]
+        self.assertEqual([task["task_id"] for task in owned], ["draft", "later"])
+        eligible = self.call("tasks", "--eligible")["result"]
+        self.assertEqual([task["task_id"] for task in eligible], ["draft", "other"])
+        candidates = self.call("tasks", "--owner", "writer", "--eligible")["result"]
+        self.assertEqual([task["task_id"] for task in candidates], ["draft"])
+        self.assertTrue(candidates[0]["eligible"])
+        self.assertEqual(self.call("tasks", "--owner", "missing")["result"], [])
+        self.call(
+            "claim-manual",
+            "--task-id",
+            "draft",
+            "--worker",
+            "writer",
+            "--authorization-revision",
+            "1",
+        )
+        self.assertEqual(self.call("tasks", "--owner", "writer", "--eligible")["result"], [])
+        self.assertEqual(len(self.call("tasks", "--owner", "writer")["result"]), 2)
+
+    def test_manual_heartbeat_renews_lease_and_rejects_stale_or_expired_fence(self):
+        # Inject only time; every command still opens and mutates the real ledger.
+        now = [100]
+        with patch(
+            "scene_production.handoff.__main__.Ledger",
+            side_effect=lambda path: Ledger(path, clock=lambda: now[0]),
+        ):
+            self.authorize()
+            self.task("draft")
+            attempt = self.call(
+                "claim-manual",
+                "--task-id",
+                "draft",
+                "--worker",
+                "writer",
+                "--authorization-revision",
+                "1",
+                "--lease-seconds",
+                "20",
+            )["result"]
+            args = ("--attempt-id", attempt["attempt_id"], "--fence", str(attempt["fence"]))
+            now[0] = 110
+            renewed = self.call("heartbeat-manual", *args)["result"]
+            self.assertEqual(renewed["lease_until"], 170)
+            now[0] = 120
+            renewed = self.call("heartbeat-manual", *args, "--lease-seconds", "90")["result"]
+            self.assertEqual(renewed["lease_until"], 210)
+            self.assertEqual(self.call("attempt", "--id", attempt["attempt_id"])["result"], renewed)
+            self.call(
+                "heartbeat-manual",
+                "--attempt-id",
+                attempt["attempt_id"],
+                "--fence",
+                str(attempt["fence"] + 1),
+                expected=1,
+            )
+            self.assertEqual(self.call("attempt", "--id", attempt["attempt_id"])["result"], renewed)
+            now[0] = 210
+            self.call("heartbeat-manual", *args, expected=1)
+            self.call("reconcile")
+            self.call("heartbeat-manual", *args, expected=1)
+            self.assertEqual(
+                self.call("attempt", "--id", attempt["attempt_id"])["result"]["status"], "unknown"
+            )
+
+    def test_manual_heartbeat_rejects_invalid_duration_and_revocation(self):
+        self.authorize()
+        self.task("draft")
+        attempt = self.call(
+            "claim-manual",
+            "--task-id",
+            "draft",
+            "--worker",
+            "writer",
+            "--authorization-revision",
+            "1",
+        )["result"]
+        args = ("--attempt-id", attempt["attempt_id"], "--fence", str(attempt["fence"]))
+        for duration in ("0", "-1", "nan", "inf"):
+            with self.subTest(duration=duration):
+                self.call("heartbeat-manual", *args, "--lease-seconds", duration, expected=1)
+        self.assertEqual(self.call("attempt", "--id", attempt["attempt_id"])["result"], attempt)
+        self.call("authorization-revoke", "--id", "approval-v1", "--source-ref", "test:user-3")
+        self.call("heartbeat-manual", *args, expected=1)
+        self.assertEqual(self.call("attempt", "--id", attempt["attempt_id"])["result"], attempt)
+
+    def test_recovery_queries_and_rejected_input_preserve_generic_errors(self):
+        self.assertEqual(self.call("resolutions")["result"], [])
+        self.assertEqual(self.call("resolutions", "--task-id", "missing")["result"], [])
+        rejected = {"protocol_version": 1, "ok": False, "error": "request_rejected"}
+        response = self.call(
+            "resolve-unknown",
+            "--input",
+            self.input("private-recovery.json", {"source_ref": "never-echo-private-source"}),
+            expected=1,
+        )
+        self.assertEqual(response, rejected)
+        duplicate = self.root / "duplicate-recovery.json"
+        duplicate.write_text('{"reason":"never-echo-private-reason","reason":"other"}')
+        self.assertEqual(
+            self.call("resolve-unknown", "--input", str(duplicate), expected=1), rejected
+        )
+        self.assertEqual(
+            self.call("resolution", "--id", "never-echo-private-id", expected=1), rejected
+        )
+        self.assertEqual(self.call("resolutions")["result"], [])
+
     def test_run_exit_code_preserves_failed_or_unknown_outcome(self):
         for status, code in (("succeeded", 0), ("failed", 1), ("unknown", 3)):
             with (
@@ -137,7 +250,7 @@ class HandoffCliTests(unittest.TestCase):
                 self.assertEqual(response["result"]["status"], status)
                 self.assertEqual(response["ok"], status == "succeeded")
 
-    def test_cli_cannot_manually_claim_or_finish_render(self):
+    def test_cli_cannot_manually_claim_heartbeat_or_finish_render(self):
         self.authorize()
         self.task("render", kind="render")
         self.call(
@@ -152,6 +265,15 @@ class HandoffCliTests(unittest.TestCase):
         )
         with Ledger(self.workflow) as ledger:
             attempt = ledger.claim("render", "worker", 1)
+        self.call(
+            "heartbeat-manual",
+            "--attempt-id",
+            attempt["attempt_id"],
+            "--fence",
+            str(attempt["fence"]),
+            expected=1,
+        )
+        self.assertEqual(self.call("attempt", "--id", attempt["attempt_id"])["result"], attempt)
         self.call(
             "finish-manual",
             "--attempt-id",
