@@ -242,6 +242,11 @@ Optional, Qt-free helpers for completed production runs:
 - [Machine-readable agent attempts](docs/scene-agent.md)
 - [Caption-linked frame samples](docs/scene-frame-samples.md)
 
+For local multi-agent coordination around these interfaces, see
+[task dependencies and durable handoff](docs/agent-handoff.md). This opt-in
+layer records authorization sources, fenced attempts and a pull inbox; it does
+not send Grok Bot notifications or grant permission to execute or publish.
+
 These helpers create new, hash-bound artifacts. They do not modify retained
 production runs, write captions back into a storyboard, synthesize speech, or
 turn machine checks into visual/semantic approval. See the
