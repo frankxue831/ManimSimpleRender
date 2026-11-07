@@ -234,3 +234,15 @@ For explicit, bounded edits to hand-authored scenes, see
 non-target decoded-frame regression checks, and retained rollback versions.
 The traced path's local render evidence is macOS-only; see the documented platform limits.
 Feedback interpretation and scene authoring remain the caller's responsibility.
+
+Optional, Qt-free helpers for completed production runs:
+
+- [Explicit caption events and SRT sidecars](docs/scene-captions.md)
+- [Existing WAV inputs and separate audio previews](docs/scene-audio.md)
+- [Machine-readable agent attempts](docs/scene-agent.md)
+- [Caption-linked frame samples](docs/scene-frame-samples.md)
+
+These helpers create new, hash-bound artifacts. They do not modify retained
+production runs, write captions back into a storyboard, synthesize speech, or
+turn machine checks into visual/semantic approval. See the
+[migration record](docs/migration-public-baseline.md) for scope and deferred work.

@@ -107,7 +107,7 @@ def digest(path):
     return h.hexdigest()
 
 
-def tool(command, timeout):
+def tool(command, timeout, *, cwd=None):
     result = subprocess.run(
         command,
         stdin=subprocess.DEVNULL,
@@ -115,6 +115,7 @@ def tool(command, timeout):
         stderr=subprocess.PIPE,
         timeout=timeout,
         check=False,
+        cwd=cwd,
     )
     if result.returncode:
         raise RuntimeError(result.stderr.decode(errors="replace")[-2000:])
@@ -304,7 +305,8 @@ def _inspect_video(video, data, run, tool_timeout, receipt):
                 f"select=eq(n\\,{native_index})",
                 "-frames:v",
                 "1",
-                str(frame),
+                "-n",
+                frame.name,
             ]
         else:
             command = [
@@ -321,9 +323,13 @@ def _inspect_video(video, data, run, tool_timeout, receipt):
                 "0:v:0",
                 "-frames:v",
                 "1",
-                str(frame),
+                "-n",
+                frame.name,
             ]
-        tool(command, tool_timeout)
+        # image2 interprets percent sequences even in directory components.
+        # Keep user-selected directories out of its output pattern. The frames
+        # directory is new for this run; -n alone is not a path-safety boundary.
+        tool(command, tool_timeout, cwd=frame.parent)
         header = frame.read_bytes()[:24]
         if (
             len(header) != 24
