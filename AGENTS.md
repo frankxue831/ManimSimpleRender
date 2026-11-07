@@ -54,6 +54,16 @@ and JSONL. A legacy receipt's `status=failed` can be intermediate; agent termina
 events require API completion, never a receipt poll. None of these modules is a
 queue, approval system, automatic retry service, or semantic review.
 
+`scene_production/handoff/` is the separate opt-in local coordination layer over
+`agent.py`: embedded SQLite transactions, immutable task dependencies, original
+authorization evidence, leased/fenced claims, and a durable local pull inbox.
+It never sends external messages, authenticates approval, automatically retries,
+or treats task completion as semantic review. Unknown render attempts remain
+blocked for operator investigation. Audited abandonment can release a slot only
+with the supported local launch-gate or same-host reboot proof; it never adopts
+success or retries. Consumers must scan durable task state as well as events.
+Read `docs/agent-handoff.md` before changes.
+
 Keep these modules Qt-free and preserve public production/revision/portable
 behavior. Image2 output patterns must be fixed relative names with an explicit
 exclusive output cwd; never include user-selected ancestor paths in a pattern.
