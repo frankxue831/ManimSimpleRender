@@ -205,3 +205,36 @@ class LedgerTests(unittest.TestCase):
             if e["type"] == "ready" and e["task_id"] == "draft"
         ]
         self.assertEqual(len(ready), 1)
+
+    def test_render_readiness_renotifies_after_slot_loss(self):
+        for terminal in ("succeeded", "failed"):
+            with self.subTest(terminal=terminal):
+                with Ledger.create(Path(self.temp.name) / terminal) as ledger:
+                    ledger.add_authorization(self.ledger.get_authorization("auth"))
+                    for name in ("a", "b"):
+                        ledger.create_task(
+                            dict(
+                                task_id=name,
+                                title=name,
+                                owner=name,
+                                action="draft",
+                                resource="scene",
+                                authorization_id="auth",
+                                kind="render",
+                                depends_on=[],
+                                payload={},
+                            )
+                        )
+                    old = next(e for e in ledger.pending_events("b") if e["type"] == "ready")
+                    ledger.acknowledge(old["event_id"], "b")
+                    attempt = ledger.claim("a", "worker", 1)
+                    with self.assertRaises(LedgerError):
+                        ledger.claim("b", "worker", 1)
+                    ledger.finish(attempt["attempt_id"], attempt["fence"], terminal, {})
+                    fresh = [e for e in ledger.pending_events("b") if e["type"] == "ready"]
+                    self.assertEqual(len(fresh), 1)
+                    self.assertNotEqual(old["event_id"], fresh[0]["event_id"])
+                    self.assertEqual(fresh[0]["ready_generation"], 2)
+                    ledger.acknowledge(old["event_id"], "b")
+                    ledger.reconcile()
+                    self.assertIn(fresh[0], ledger.pending_events("b"))

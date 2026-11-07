@@ -8,13 +8,14 @@ import json
 import math
 import os
 from pathlib import Path
-import signal
 import subprocess
 import sys
 import threading
 import time
 
 from scene_production import agent
+from app.render.process_session import _signal_group
+from app.render.runner import DEFAULT_SUPERVISION_CLEANUP_TIMEOUT
 
 LIMIT = 2 * 1024 * 1024
 
@@ -29,6 +30,39 @@ def _bounded_bytes(path):
     if len(data) > LIMIT:
         raise ValueError("output limit")
     return data
+
+
+def _persist_supervised(path, value, heartbeat, interval):
+    """One writer, with lease renewal on the SQLite-owning calling thread.
+
+    If authority changes, finish this same writer before returning the error.
+    There is never a competing correction writer. Evidence is not permission.
+    Unbounded OS/storage stalls are outside the local recovery guarantee.
+    """
+    errors = []
+
+    def write():
+        try:
+            agent._atomic_write(path, value)
+            os.chmod(path, 0o600)
+        except BaseException as exc:
+            errors.append(exc)
+
+    heartbeat()
+    writer = threading.Thread(target=write, daemon=True)
+    writer.start()
+    heartbeat_error = None
+    while writer.is_alive():
+        try:
+            heartbeat()
+        except Exception as exc:
+            heartbeat_error = exc
+        writer.join(timeout=interval)
+    if heartbeat_error is not None:
+        raise heartbeat_error
+    if errors:
+        raise errors[0]
+    heartbeat()
 
 
 def _events(data):
@@ -158,6 +192,13 @@ def run_task(
     if task["kind"] != "render" or task.get("action") != "render":
         raise ValueError("render task required")
     # Validate before claim; no caller-selected executable, cwd or output root.
+    if (
+        isinstance(poll_interval, bool)
+        or not isinstance(poll_interval, (int, float))
+        or not math.isfinite(poll_interval)
+        or poll_interval <= 0
+    ):
+        raise ValueError("poll_interval must be finite and positive")
     _arguments(task["payload"], Path("unused"))
     claim = ledger.claim(task_id, worker_id, authorization_revision, lease_seconds=lease_seconds)
     attempt_id, fence = claim["attempt_id"], claim["fence"]
@@ -167,6 +208,10 @@ def run_task(
     result = {"status": "unknown", "exit_observed": False}
     threads = []
     overflow = threading.Event()
+
+    def heartbeat():
+        return ledger.heartbeat(attempt_id, fence, lease_seconds=lease_seconds)
+
     try:
         directory.parent.mkdir(mode=0o700, exist_ok=True)
         if directory.parent.resolve() != directory.parent:
@@ -182,9 +227,11 @@ def run_task(
             stderr=subprocess.PIPE,
             start_new_session=True,
         )
-        agent._atomic_write(
+        _persist_supervised(
             directory / "process.json",
             agent._json({"pid": process.pid, "attempt_id": attempt_id, "fence": fence}),
+            heartbeat,
+            min(poll_interval, lease_seconds / 6),
         )
 
         def drain(pipe, name):
@@ -216,28 +263,67 @@ def run_task(
             if time.monotonic() >= next_heartbeat:
                 ledger.heartbeat(attempt_id, fence, lease_seconds=lease_seconds)
                 next_heartbeat = time.monotonic() + lease_seconds / 3
-            time.sleep(poll_interval)
-        for thread in threads:
-            thread.join(timeout=2)
-        if any(t.is_alive() for t in threads) or overflow.is_set():
+            time.sleep(min(poll_interval, lease_seconds / 6))
+        drain_deadline = time.monotonic() + 4
+        while any(thread.is_alive() for thread in threads):
+            if time.monotonic() >= drain_deadline:
+                raise ValueError("incomplete output")
+            ledger.heartbeat(attempt_id, fence, lease_seconds=lease_seconds)
+            time.sleep(min(poll_interval, lease_seconds / 6))
+        if overflow.is_set():
             raise ValueError("incomplete output")
-        result = {"status": "unknown", "exit_observed": True, "returncode": process.returncode}
-        result["status"] = verify_result(
-            directory / "agent", _bounded_bytes(directory / "protocol.log"), process.returncode
-        )
-        result.update(_handoff_result(directory))
+        verified = []
+        verification_error = []
+
+        def verify():
+            try:
+                status = verify_result(
+                    directory / "agent",
+                    _bounded_bytes(directory / "protocol.log"),
+                    process.returncode,
+                )
+                verified.append(
+                    dict(
+                        status=status,
+                        exit_observed=True,
+                        returncode=process.returncode,
+                        **_handoff_result(directory),
+                    )
+                )
+            except BaseException:
+                verification_error.append(True)
+
+        verifier = threading.Thread(target=verify, daemon=True)
+        verifier.start()
+        while verifier.is_alive():
+            ledger.heartbeat(attempt_id, fence, lease_seconds=lease_seconds)
+            verifier.join(timeout=min(poll_interval, lease_seconds / 6))
+        if verification_error or not verified:
+            raise ValueError("verification failed")
+        ledger.heartbeat(attempt_id, fence, lease_seconds=lease_seconds)
+        result = verified[0]
+
     except BaseException:
         interrupted = True
         if process is not None:
+            # Escalate the captured group even when the leader already exited.
+            # This remains best-effort: detached descendants are not covered.
             try:
-                os.killpg(process.pid, signal.SIGTERM)
+                _signal_group(process.pid, force=False, timeout=2)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            try:
+                # The agent's RenderRunner owns a separate render session. Give
+                # its cooperative cleanup the shared core's conservative bound
+                # before killing the wrapper that is supervising that session.
+                process.wait(timeout=DEFAULT_SUPERVISION_CLEANUP_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                pass
+            try:
+                _signal_group(process.pid, force=True, timeout=2)
                 process.wait(timeout=2)
             except (OSError, subprocess.TimeoutExpired):
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait(timeout=2)
-                except (OSError, subprocess.TimeoutExpired):
-                    pass
+                pass
             result = {
                 "status": "unknown",
                 "exit_observed": process.poll() is not None,
@@ -246,13 +332,23 @@ def run_task(
             }
     for thread in threads:
         thread.join(timeout=2)
+    if process is not None:
+        # An acquisition failure may precede the reader threads. Only close
+        # streams that no reader owns; closing a live reader can block on its lock.
+        for pipe in (process.stdout, process.stderr)[len(threads) :]:
+            if pipe is not None:
+                pipe.close()
     if directory.exists():
         try:
-            agent._atomic_write(
-                directory / "exit.json", agent._json(dict(result, interrupted=interrupted))
+            _persist_supervised(
+                directory / "exit.json",
+                agent._json(dict(result, interrupted=interrupted)),
+                heartbeat,
+                min(poll_interval, lease_seconds / 6),
             )
-            os.chmod(directory / "exit.json", 0o600)
-        except OSError:
-            result = {"status": "unknown", "exit_observed": False}
+        except Exception:
+            # The authoritative ledger may not adopt success after revocation,
+            # expiry or failed evidence persistence. Never race a second writer.
+            result = {"status": "unknown", "exit_observed": result["exit_observed"]}
     ledger.finish(attempt_id, fence, result["status"], result)
     return result

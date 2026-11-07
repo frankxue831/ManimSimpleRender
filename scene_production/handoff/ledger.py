@@ -107,6 +107,7 @@ class Ledger:
             task_id=task["task_id"],
             authorization_id=task["authorization_id"],
             attempt_id=attempt,
+            ready_generation=task.get("ready_generation", 0),
             acknowledged=False,
             created_at=self.clock(),
             authorization_revision=self._get("auth", task["authorization_id"])["revision"],
@@ -159,6 +160,7 @@ class Ledger:
                 for task in self._all("task"):
                     if task["authorization_id"] == auth_id:
                         self._event(task, "authorization_revoked")
+                self._notify_ready()
         return auth
 
     def create_task(self, data):
@@ -278,6 +280,7 @@ class Ledger:
             self._put("attempt", attempt["attempt_id"], attempt, new=True)
             self._put("task", task_id, task)
             self._event(task, "claimed", attempt["attempt_id"])
+            self._notify_ready()
         return attempt
 
     def _active(self, attempt_id, fence):
@@ -322,12 +325,17 @@ class Ledger:
         return attempt
 
     def _notify_ready(self, attempt_id=None):
-        # Advisory notification only: claim rechecks current eligibility atomically.
+        # Ready is advisory; each blocked-to-eligible transition gets its own event.
         for task in self._all("task"):
-            if not task.get("ready_notified") and self._block(task) is None:
-                task["ready_notified"] = True
+            eligible = self._block(task) is None
+            previously_eligible = task.get("last_eligible", False)
+            if eligible != previously_eligible:
+                task["last_eligible"] = eligible
+                if eligible:
+                    task["ready_generation"] = task.get("ready_generation", 0) + 1
                 self._put("task", task["task_id"], task)
-                self._event(task, "ready", attempt_id)
+                if eligible:
+                    self._event(task, "ready", attempt_id)
 
     def reconcile(self):
         expired = []
@@ -341,6 +349,7 @@ class Ledger:
                     self._put("task", task["task_id"], task)
                     self._event(task, "unknown", attempt["attempt_id"])
                     expired.append(attempt)
+            self._notify_ready()
         return expired
 
     def pending_events(self, owner):

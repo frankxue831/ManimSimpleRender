@@ -91,7 +91,7 @@ class RunnerIntegrationTests(unittest.TestCase):
             )
         )
 
-    def run_child(self, mode):
+    def run_child(self, mode, **options):
         import subprocess
         import sys
         from unittest.mock import patch
@@ -144,7 +144,7 @@ sys.exit(0 if mode == 'wrong_exit' else terminal['exit_code'])
             return real_popen([sys.executable, "-c", script, output, mode], **kwargs)
 
         with patch("scene_production.handoff.runner.subprocess.Popen", side_effect=launch):
-            return run_task(self.ledger, "task", "worker", 1, poll_interval=0.005)
+            return run_task(self.ledger, "task", "worker", 1, poll_interval=0.005, **options)
 
     def test_success_and_recovery(self):
         self.assertEqual(self.run_child("success")["status"], "succeeded")
@@ -278,3 +278,131 @@ sys.exit(0 if mode == 'wrong_exit' else terminal['exit_code'])
         self.assertEqual(reconcile_evidence(self.root / "missing"), {"status": "unknown"})
         (self.root / "exit.json").write_text("[]")
         self.assertEqual(reconcile_evidence(self.root), {"status": "unknown"})
+
+    def test_heartbeat_continues_during_slow_verification(self):
+        import time
+        from unittest.mock import patch
+        from scene_production.handoff import runner
+
+        original_verify = runner.verify_result
+        original_heartbeat = self.ledger.heartbeat
+        calls = []
+
+        def heartbeat(*args, **kwargs):
+            calls.append(time.monotonic())
+            return original_heartbeat(*args, **kwargs)
+
+        def slow_verify(*args):
+            time.sleep(0.3)
+            return original_verify(*args)
+
+        with (
+            patch.object(runner, "verify_result", side_effect=slow_verify),
+            patch.object(self.ledger, "heartbeat", side_effect=heartbeat),
+        ):
+            result = self.run_child("success", lease_seconds=0.2)
+        self.assertEqual(result["status"], "succeeded")
+        self.assertGreater(len(calls), 5)
+
+    def test_revocation_during_verification_prevents_success(self):
+        import threading
+        import time
+        from unittest.mock import patch
+        from scene_production.handoff import runner
+
+        verifying = threading.Event()
+        original_verify = runner.verify_result
+        original_heartbeat = self.ledger.heartbeat
+
+        def slow_verify(*args):
+            verifying.set()
+            time.sleep(0.05)
+            return original_verify(*args)
+
+        def heartbeat(*args, **kwargs):
+            if verifying.is_set():
+                self.ledger.revoke_authorization("auth", "message:3")
+            return original_heartbeat(*args, **kwargs)
+
+        with (
+            patch.object(runner, "verify_result", side_effect=slow_verify),
+            patch.object(self.ledger, "heartbeat", side_effect=heartbeat),
+        ):
+            result = self.run_child("success")
+        self.assertEqual(result["status"], "unknown")
+
+    def test_cleanup_escalates_after_leader_exit(self):
+        import os
+        import signal
+        import subprocess
+        import sys
+        import time
+        from unittest.mock import patch
+        from scene_production.handoff.runner import run_task
+
+        if sys.platform == "win32":
+            self.skipTest("POSIX process group regression")
+        ready = self.root / "child.ready"
+        original = subprocess.Popen
+        owned = []
+
+        def launch(args, **kwargs):
+            kwargs["start_new_session"] = False
+            kwargs["process_group"] = 0
+            leader = original([sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
+            owned.append(leader)
+            child = original(
+                [
+                    sys.executable,
+                    "-c",
+                    "import signal,sys,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                    "open(sys.argv[1], 'w').close(); time.sleep(30)",
+                    str(ready),
+                ],
+                process_group=leader.pid,
+            )
+            owned.append(child)
+            deadline = time.monotonic() + 3
+            while not ready.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(ready.exists(), "child must install TERM handler before revocation")
+            return leader
+
+        heartbeat = self.ledger.heartbeat
+        calls = []
+
+        def revoke(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                self.ledger.revoke_authorization("auth", "message:2")
+            return heartbeat(*args, **kwargs)
+
+        try:
+            with (
+                patch("scene_production.handoff.runner.subprocess.Popen", side_effect=launch),
+                patch.object(self.ledger, "heartbeat", side_effect=revoke),
+            ):
+                result = run_task(self.ledger, "task", "worker", 1)
+            self.assertEqual(result["status"], "unknown")
+            self.assertEqual(owned[0].wait(timeout=3), -signal.SIGTERM)
+            self.assertEqual(owned[1].wait(timeout=3), -signal.SIGKILL)
+        finally:
+            for process in owned:
+                if process.poll() is None:
+                    os.kill(process.pid, signal.SIGKILL)
+                process.wait(timeout=3)
+
+    def test_heartbeat_during_exit_persistence(self):
+        import time
+        from unittest.mock import patch
+        from scene_production import agent
+
+        original = agent._atomic_write
+
+        def delayed(path, value):
+            if path.name == "exit.json":
+                time.sleep(0.3)
+            return original(path, value)
+
+        with patch.object(agent, "_atomic_write", side_effect=delayed):
+            self.assertEqual(self.run_child("success", lease_seconds=0.2)["status"], "succeeded")
