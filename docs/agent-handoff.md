@@ -142,11 +142,18 @@ Rejected requests exit 1 without echoing private input or exception text.
 - The runner launches a fixed Python module with argv, never a shell or a
   caller-selected command. It correlates started/terminal tokens, observed exit,
   disk state/journal, receipt and retained artifact hashes before success.
+  It continues renewing the lease while draining logs, hashing artifacts, and
+  writing process/exit evidence. On interruption it attempts bounded group
+  termination followed by forced group cleanup even if the leader has exited;
+  detached descendants and unbounded storage stalls remain outside its guarantee.
 - A legacy `result.json` can temporarily say failed during media inspection.
   It is never used as a liveness signal, failure trigger, or retry instruction.
 - Completion and downstream ready events commit together. Repeated polling
   returns unacknowledged records; duplicate ACK is harmless. No remote send
   receipt or consumer side effect is invented.
+- Ready events are advisory. If another task takes the render slot, claim
+  rechecks current eligibility. Regaining eligibility creates a fresh ready
+  event; acknowledging an older event does not suppress this new handoff.
 - `reconcile` marks expired attempts unknown and advances the fencing token.
   Late completion cannot overwrite them. It does not kill processes or retry.
 - `runner.reconcile_evidence(output_directory)` is a read-only proposal based on
@@ -166,10 +173,49 @@ visual quality, audience understanding, version-bound review withdrawal and
 release eligibility. Those review records, complete input/runtime freezing,
 new-version supersession and remote integration remain later work.
 
+## Verified Grok integration boundary
+
+Checked November 7, 2026: the official
+[routines and automations documentation](https://docs.x.ai/grok-bot/skills-routines-and-automations)
+supports an inbound webhook as a possible future MSR-to-Grok wake signal.
+It accepts HTTP POST with a Bearer secret and optional JSON. Its stated contract
+is: "A `200` response means Grok Bot accepted the call and started a run".
+Acceptance is not completion or a recipient's application ACK. Rate-limit
+failures are not automatically retried. That page does not establish provider
+idempotency, durable offline redelivery, or an owner-acceptance protocol.
+
+No webhook was created or invoked for this implementation. A later adapter
+must preserve `event_id` across retries, distinguish HTTP acceptance from owner
+ACK, treat a timeout after transmission as uncertain, and never restart a render
+merely because notification failed. A minimal approved envelope could contain
+only `event_id`, `task_id` and `attempt_id`; private authorization text, paths,
+logs and media should not be included by default.
+
+The [computer documentation](https://docs.x.ai/grok-bot/computer-and-apps)
+describes a cloud execution environment. A cloud Bot cannot be assumed to read
+this Mac-local workflow or localhost. Its ability to invoke these CLI commands
+on the specific Mac must be verified separately, using the currently supported
+Grok tools and appropriate user authorization. The installed app's internal
+SendToAgent schemas are not a supported public integration contract; their
+parameter spellings differ from the supplied review's examples.
+
+`tests/test_handoff_consumer_flow.py` exercises a no-send integration boundary:
+each producer/consumer command runs in a separate local interpreter. It verifies
+that an ignored poll survives restart, original authorization and predecessor
+results can be fetched, duplicate ACK is idempotent, wrong-owner ACK is rejected,
+and revocation blocks a later claim even after an earlier ready event and ACK.
+This is our CLI contract, **not a Grok runtime or actual delivery test**.
+
+Real integration still needs an explicitly chosen Grok recipient/routine,
+approved payload and test invocation, secure credential provisioning, and a
+verified way for that Bot to query the Mac-owned state. Creating routines or
+persistent credentials, enabling background polling, sending a test event, and
+consuming Grok usage are not performed or authorized by these examples.
+
 ## Tests
 
 ```sh
-python -m unittest tests.test_handoff_ledger tests.test_handoff_runner tests.test_handoff_cli
+python -m unittest discover -s tests -p 'test_handoff*.py'
 QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests
 python -m black --check app explainer scene_production tests main.py
 python -m flake8 app explainer scene_production tests main.py
