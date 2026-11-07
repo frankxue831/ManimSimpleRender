@@ -82,7 +82,7 @@ class PipelineTests(unittest.TestCase):
         return json.loads(next(self.output.glob("*/result.json")).read_text())
 
     @staticmethod
-    def fake_tool(command, timeout):
+    def fake_tool(command, timeout, *, cwd=None):
         import struct
 
         if command[0] == "ffprobe":
@@ -101,7 +101,7 @@ class PipelineTests(unittest.TestCase):
                 }
             ).encode()
         if command[-1] != "-":
-            Path(command[-1]).write_bytes(
+            (Path(cwd or ".") / command[-1]).write_bytes(
                 b"\x89PNG\r\n\x1a\n" + b"\x00" * 8 + struct.pack(">II", 16, 16)
             )
         return b""
@@ -158,7 +158,7 @@ class PipelineTests(unittest.TestCase):
             ):
                 self.output = self.root / (stage + type(failure).__name__)
 
-                def failing(command, timeout):
+                def failing(command, timeout, *, cwd=None):
                     actual = (
                         "probe"
                         if command[0] == "ffprobe"
@@ -166,7 +166,7 @@ class PipelineTests(unittest.TestCase):
                     )
                     if actual == stage:
                         raise failure
-                    return self.fake_tool(command, timeout)
+                    return self.fake_tool(command, timeout, cwd=cwd)
 
                 with self.subTest(stage=stage, failure=type(failure).__name__):
                     with patch("scene_production.tool", side_effect=failing):
@@ -183,10 +183,10 @@ class PipelineTests(unittest.TestCase):
     def test_wrong_png_dimensions_rejected(self):
         from unittest.mock import patch
 
-        def wrong(command, timeout):
-            result = self.fake_tool(command, timeout)
+        def wrong(command, timeout, *, cwd=None):
+            result = self.fake_tool(command, timeout, cwd=cwd)
             if command[0] == "ffmpeg" and command[-1] != "-":
-                Path(command[-1]).write_bytes(b"not png")
+                (Path(cwd or ".") / command[-1]).write_bytes(b"not png")
             return result
 
         with patch("scene_production.tool", side_effect=wrong):

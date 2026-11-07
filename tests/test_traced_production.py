@@ -15,8 +15,8 @@ class TracedProductionTests(unittest.TestCase):
         fixtures.PipelineTests.setUp(self)
 
     @staticmethod
-    def fake_tool(command, timeout):
-        out = fixtures.PipelineTests.fake_tool(command, timeout)
+    def fake_tool(command, timeout, *, cwd=None):
+        out = fixtures.PipelineTests.fake_tool(command, timeout, cwd=cwd)
         if command[0] == "ffprobe":
             d = json.loads(out)
             d["streams"][0].update(nb_frames="30", r_frame_rate="30/1")
@@ -86,9 +86,9 @@ class TracedProductionTests(unittest.TestCase):
     def test_traced_previews_select_exact_native_frame_indices(self):
         calls = []
 
-        def observe(command, timeout):
+        def observe(command, timeout, *, cwd=None):
             calls.append(command)
-            return self.fake_tool(command, timeout)
+            return self.fake_tool(command, timeout, cwd=cwd)
 
         with patch("scene_production.tool", side_effect=observe):
             out = render(

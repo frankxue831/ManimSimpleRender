@@ -19,10 +19,10 @@ class RecordedVideoTests(unittest.TestCase):
         self.target = self.root / "rechecked"
 
     def make(self, failure=None):
-        def inspect(command, timeout):
+        def inspect(command, timeout, *, cwd=None):
             if command[0] == "ffprobe" and failure:
                 raise failure
-            return fixtures.PipelineTests.fake_tool(command, timeout)
+            return fixtures.PipelineTests.fake_tool(command, timeout, cwd=cwd)
 
         with patch("scene_production.tool", side_effect=inspect):
             try:
@@ -47,7 +47,7 @@ class RecordedVideoTests(unittest.TestCase):
         return json.loads(next(self.target.glob("*/result.json")).read_text())
 
     def test_flat_identity_is_durable_before_probe_and_old_failed_is_rejected(self):
-        def failing(command, timeout):
+        def failing(command, timeout, *, cwd=None):
             saved = json.loads(next(self.output.glob("*/result.json")).read_text())
             self.assertEqual(saved["completed_artifact_version"], 1)
             self.assertEqual(saved["status"], "failed")
@@ -190,8 +190,8 @@ class RecordedVideoTests(unittest.TestCase):
             old_video.write_bytes(original)
         self.target = self.root / "decode-change"
 
-        def mutating(command, timeout):
-            value = fixtures.PipelineTests.fake_tool(command, timeout)
+        def mutating(command, timeout, *, cwd=None):
+            value = fixtures.PipelineTests.fake_tool(command, timeout, cwd=cwd)
             if command[-1] == "-":
                 Path(command[command.index("-i") + 1]).write_bytes(b"changed")
             return value
@@ -207,7 +207,7 @@ class RecordedVideoTests(unittest.TestCase):
             for failure in (RuntimeError("bad media"), subprocess.TimeoutExpired("tool", 1)):
                 self.target = self.root / (stage + type(failure).__name__)
 
-                def failing(command, timeout):
+                def failing(command, timeout, *, cwd=None):
                     actual = (
                         "probe"
                         if command[0] == "ffprobe"
@@ -215,7 +215,7 @@ class RecordedVideoTests(unittest.TestCase):
                     )
                     if actual == stage:
                         raise failure
-                    return fixtures.PipelineTests.fake_tool(command, timeout)
+                    return fixtures.PipelineTests.fake_tool(command, timeout, cwd=cwd)
 
                 with patch("scene_production.tool", side_effect=failing):
                     with self.assertRaises(type(failure)) as error:
