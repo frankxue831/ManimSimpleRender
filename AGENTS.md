@@ -43,6 +43,22 @@ Services never import the UI; only the render worker imports Qt.
 
 ## Common Commands
 
+### Production Sidecars and Agent Attempts
+
+`scene_production/captions.py` binds explicit frame events and an external SRT
+to a completed public run. `audio.py` freezes existing PCM WAV inputs and creates
+separate previews; these do not inherit the silent revision contract.
+`visual_frames.py` samples at most 12 decoded frames with cue references.
+`agent.py` wraps the existing render/reinspect APIs with persisted attempt state
+and JSONL. A legacy receipt's `status=failed` can be intermediate; agent terminal
+events require API completion, never a receipt poll. None of these modules is a
+queue, approval system, automatic retry service, or semantic review.
+
+Keep these modules Qt-free and preserve public production/revision/portable
+behavior. Image2 output patterns must be fixed relative names with an explicit
+exclusive output cwd; never include user-selected ancestor paths in a pattern.
+See `docs/migration-public-baseline.md` and each helper's usage document.
+
 ### Running the Application
 ```bash
 python main.py
