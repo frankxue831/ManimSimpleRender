@@ -140,5 +140,5 @@ different encodings and does not update source or storyboard content.
 Author events and SRT derivation use the Qt-free `app.render.caption_events` and
 `app.render.subtitle_draft` helpers. The production adapter binds annotations to a
 successful public render; it does not create another rendering path. See the
-[archived migration record](archive/migrations/migration-public-baseline.md) for
+[archived migration record](archive/migrations/migration-public-baseline.md#caption-migration-scope) for
 prototype origins and the original scope decisions.

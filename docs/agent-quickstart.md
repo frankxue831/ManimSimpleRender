@@ -123,6 +123,10 @@ your available viewing tools. Review transitions, timing, object identity and fa
 successful machine checks do not establish visual or semantic acceptance. Frame paths
 are also paired with inspection metadata in the production receipt.
 
+Inspection does not enforce delivery requirements such as H.264 High profile,
+`yuv420p`, 1280x720 or 30 fps. Check any required output specification separately;
+see the [production inspection limits](scene-production.md).
+
 The attempt directory contains `attempt.json`, `events.jsonl`, private `api.log`,
 and diagnostics when available. Its `production/scene-*/` child retains the ordinary
 run, including `result.json` and `render.log`. Read the event's structured error and
@@ -136,7 +140,7 @@ use the original render receipt from `artifacts["receipt"]["path"]`:
 
 ```sh
 python -m scene_production.agent inspect \
-  --from-run /absolute/attempt-001/production/scene-ID/result.json \
+  --from-run /absolute/existing-parent/attempt-001/production/scene-ID/result.json \
   --timeline /absolute/project/corrected-timeline.json \
   --output-dir /absolute/existing-parent/inspection-001 \
   --tool-timeout 30

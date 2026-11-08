@@ -36,6 +36,11 @@ subprocess has a finite timeout (`--tool-timeout`, default 30 seconds). At most
 claimed. Success means these media checks passed, not that the explanation is
 correct or visually effective. Review native-size frames and temporal sequences.
 
+Successful render inspection or recorded-video reinspection does not certify a
+particular delivery encoding: H.264 High profile, `yuv420p`, 1280x720 resolution
+and 30 fps are not enforced. Check any required codec/profile, pixel format,
+resolution and frame rate separately before delivery.
+
 Runs retain source/timeline snapshots, video, frames, hashes, probe metadata and
 logs. Failures retain their stage and error when receipt persistence succeeds;
 input validation fails before creating a directory. A rendered video's identity

@@ -240,7 +240,7 @@ causal animations, with portable font selection and inspection timelines.
 For explicit, bounded edits to hand-authored scenes, see
 [scene revision helpers](docs/scene-revision.md): stable IDs, guarded edits,
 non-target decoded-frame regression checks, and retained rollback versions.
-The traced path's local render evidence is macOS-only; see the documented platform limits.
+The traced path's local render evidence was collected only on macOS; see the documented platform limits.
 Feedback interpretation and scene authoring remain the caller's responsibility.
 
 Optional, Qt-free helpers for completed production runs:

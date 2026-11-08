@@ -150,7 +150,7 @@ failure reasons, privacy limits and timing interpretation.
 
 ## Verification and history
 
-See the [archived migration record](archive/migrations/migration-public-baseline.md)
+See the [archived migration record](archive/migrations/migration-public-baseline.md#agent-migration-scope)
 for the prototype origins and original migration scope. This interface uses the
 public production and reinspection APIs described above.
 

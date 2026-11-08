@@ -18,11 +18,10 @@ Historical validation results are in the [logging verification record](archive/r
 | `scene_production.handoff` | SQLite task/attempt/event state with IDs, claim fences, ready/claimed/terminal/ACK times; `process.json`, `exit.json`, bounded `protocol.log` and `stderr.log`; nested agent attempt | Private runner phase timeline and explicit unknown phase/cause; sanitized agent error/stage retained for verified failed attempts |
 | `explainer render` | Callback/console output; temporary generated source/media kept for known render failures, otherwise cleaned | Private `.explainer-logs/run-*/render.log` and `diagnostics.jsonl` beside the requested output; retained on success and unexpected failure; location announced to callback or stderr |
 
-Caption, audio, visual-frame and revision helpers retain their existing
-manifests/receipts and artifact relationships. They have not been given a new
-phase timeline in this change. `concept_render` is also unchanged. The shared
-subprocess core still exposes diagnostics through its callback/result; it does
-not silently create files for every caller.
+Caption, audio, visual-frame and revision helpers retain manifests/receipts and
+artifact relationships. These helpers and `concept_render` do not provide the
+phase timelines described above. The shared subprocess core exposes diagnostics
+through its callback/result; it does not silently create files for every caller.
 
 ## Finding a problem
 
@@ -40,7 +39,7 @@ literal text and sparse output is flushed approximately every 200 ms.
 
 For scene production, start with `result.json` **after the synchronous API has
 returned or raised**, then read the adjacent `diagnostics.jsonl` and `render.log`.
-Failed receipts now include `exception_type` and a fixed `failure_reason`:
+Failed receipts include `exception_type` and a fixed `failure_reason`:
 `render_timeout`, `render_cleanup_timeout`, `cancelled`, `interrupted`,
 `executable_not_found`, `render_failed`, `tool_timeout`, or `exception`.
 `stage` identifies the observed failure stage;

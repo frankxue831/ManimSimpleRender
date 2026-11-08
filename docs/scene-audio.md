@@ -116,7 +116,7 @@ Do not mutate inputs concurrently with binding or preview creation.
 
 Captions remain a separate sidecar; the audio preview contains the original video
 and an added audio track. For prototype origins and the original migration scope,
-see the [archived migration record](archive/migrations/migration-public-baseline.md).
+see the [archived migration record](archive/migrations/migration-public-baseline.md#audio-migration-scope).
 
 ## Verification
 

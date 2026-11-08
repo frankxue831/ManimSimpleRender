@@ -10,6 +10,8 @@ All notable changes to this project are listed here. The format follows
 
 - Ordinary Scene production and recorded-video reinspection, with media checks,
   retained inputs, frames and receipts (#16).
+- Hand-authored Netty EventLoop and TCP message-framing examples with inspection
+  timelines and font-coverage checks (#16).
 - Explicit silent-scene revisions, stable section IDs, frame evidence, guarded
   edits and retained rollback versions (#17).
 - Portable selected-file project export, inspection, unpacking and receiving
@@ -18,13 +20,24 @@ All notable changes to this project are listed here. The format follows
   and a JSONL agent interface over production and reinspection (#24).
 - Local task dependencies, authorization-source records, fenced claims, pull inbox
   and audited recovery for multi-agent handoff (#25).
+- Fixed-message font-failure diagnostics and recorded-video reinspection through
+  the isolated trusted launcher (#22).
 - Render phase diagnostics, complete GUI log export, implementation fingerprints
-  and Explainer output identity records (#22, #26).
+  and Explainer output identity records (#26).
 
 ### Fixed
 
 - Generated diagram motion validates actor/path start consistency and preserves
   destination visibility and actor layering (#23).
+
+### Known limits
+
+- Inspection timelines select checks; they do not drive animation. Media checks
+  and sampled visual review do not establish factual correctness or full-playback acceptance.
+- Revision restore requires retained baseline and candidate runs and media; it is
+  not a crash-atomic multi-file transaction. See the
+  [revision guide](docs/scene-revision.md#retention-and-restore-verification) for retention
+  requirements and [platform evidence](docs/scene-revision.md#optional-observed-frame-evidence).
 
 ### Docs
 
