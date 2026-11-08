@@ -5,7 +5,7 @@ The tool packages explicit inputs and checks declared prerequisites; YOU decide
 how to interpret feedback and author the replacement code. Inspect sources first.
 
 Use the supplied local product wheel or a checkout with scene_production.portable.
-The tool does not install its own dependencies. Python3.12/3.13, Manim0.20.1 and
+The tool does not install its own dependencies. Python3.12/3.13, Manim0.22.1 and
 FFmpeg must already exist. The example requests Arial Unicode MS; use no font
 downloads. If absent, report the missing font. An explicit font substitution
 requires a new baseline and must be reported as a visual change.

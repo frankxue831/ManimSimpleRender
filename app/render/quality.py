@@ -1,13 +1,13 @@
 """Canonical manim quality ladder shared by the GUI config and the explainer.
 
 ONE source of truth for which quality flags exist and which pixel height each
-selects (manim 0.20.1, the pyproject pin). GUI labels stay in config (the one
+selects (manim 0.22.1, the pyproject pin). GUI labels stay in config (the one
 place that consumes them); the explainer derives a flag from a storyboard
 resolution height. Pure stdlib -- this module is part of the Qt-free render
 core. See docs/adr/0001-render-core-boundary.md.
 """
 
-# Ordered low -> high: (flag, pixel_height) pairs matching manim 0.20.1.
+# Ordered low -> high: (flag, pixel_height) pairs matching manim 0.22.1.
 QUALITY_LADDER = (
     ("-ql", 480),
     ("-qm", 720),

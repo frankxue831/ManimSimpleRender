@@ -31,24 +31,18 @@ class _CaptureState:
             raise ValueError("frame capture supports exactly one writer")
         self.writer = writer
         if self.collector is None:
-            rate = Fraction(str(writer.renderer.camera.frame_rate))
+            rate = Fraction(str(writer.video_encoder.frame_rate))
             self.collector = FrameTrace(rate, self.source_sha256)
         writer._scene_production_frame_count = self.collector.count
         return self.collector
 
     def abort(self, error):
-        # Manim starts a non-daemon queue consumer before calling write_frame.
-        # A hook exception bypasses Scene.tear_down; stop that consumer so the
-        # child can report its original failure instead of waiting for timeout.
+        # Manim 0.22 owns current and in-flight encoders as a pool. Abort all
+        # observed writers, including a rejected second writer, without hiding
+        # the original capture error. The manager may already have drained them.
         for writer in self.writers:
             try:
-                thread = getattr(writer, "writer_thread", None)
-                if thread is not None and thread.is_alive():
-                    writer.close_partial_movie_stream()
-                else:
-                    container = getattr(writer, "video_container", None)
-                    if container is not None:
-                        container.close()
+                writer.abort_encode_jobs()
             except Exception as cleanup_error:
                 error.add_note("frame writer cleanup failed: " + str(cleanup_error))
 
@@ -64,16 +58,16 @@ def capture_hooks(writer_class, scene_class, source_sha256):
     original_write = writer_class.write_frame
     original_section = scene_class.next_section
 
-    def write(writer, frame_or_renderer, num_frames=1):
+    def write(writer, frame_or_renderer, *, repeat=1):
         collector = state.owner(writer)
         if not hasattr(frame_or_renderer, "tobytes"):
             raise ValueError("raw capture requires the actual Cairo RGBA array")
         frame = frame_or_renderer
         if str(frame.dtype) != "uint8":
             raise ValueError("raw capture requires uint8 RGBA frames")
-        collector.add_frame(frame.tobytes(), frame.shape, num_frames)
+        collector.add_frame(frame.tobytes(), frame.shape, repeat)
         writer._scene_production_frame_count = collector.count
-        return original_write(writer, frame_or_renderer, num_frames=num_frames)
+        return original_write(writer, frame_or_renderer, repeat=repeat)
 
     def section(scene, name="unnamed", *args, **kwargs):
         skip = kwargs.get("skip_animations", args[1] if len(args) > 1 else False)

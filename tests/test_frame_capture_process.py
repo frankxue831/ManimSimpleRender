@@ -1,4 +1,4 @@
-"""Optional real-Manim regression for an encoder thread stranded by hook errors."""
+"""Real-Manim regressions for native frame tracing and encoder cleanup."""
 
 import importlib.util
 import json
@@ -40,3 +40,56 @@ class CaptureProcessTests(unittest.TestCase):
             data = json.loads(receipt.read_text())
             self.assertEqual((data["status"], data["stage"]), ("failed", "render"))
             self.assertIn("call next_section", (receipt.parent / "render.log").read_text())
+
+    @unittest.skipUnless(shutil.which("ffprobe"), "requires ffprobe for video inspection")
+    def test_traced_render_preserves_native_sections_and_repeated_frames(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "scene.py"
+            source.write_text(
+                "from manim import RED, RIGHT, Scene, Square\n"
+                "from scene_production.frame_clock import hold_until_frame\n"
+                "class Traced(Scene):\n"
+                " def construct(self):\n"
+                '  self.next_section("intro")\n'
+                "  square = Square()\n  self.add(square)\n"
+                "  self.play(square.animate.shift(RIGHT), run_time=.2)\n"
+                "  hold_until_frame(self, 6)\n"
+                '  self.next_section("outro")\n'
+                "  square.set_color(RED)\n  hold_until_frame(self, 12)\n"
+            )
+            timeline = root / "timeline.json"
+            timeline.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "segments": [
+                            {"label": "intro", "start": 0, "end": 0.4, "samples": [0.2]},
+                            {"label": "outro", "start": 0.4, "end": 0.8, "samples": [0.6]},
+                        ],
+                    }
+                )
+            )
+            receipt = render(
+                source,
+                "Traced",
+                timeline,
+                root / "runs",
+                quality="ql",
+                record_scene_frames=True,
+                timeout=30,
+            )
+            self.assertEqual(receipt["status"], "success")
+            trace = json.loads(Path(receipt["frame_trace"]["path"]).read_text())
+            self.assertEqual(trace["frame_rate"], "15")
+            self.assertEqual(trace["frame_count"], 12)
+            self.assertEqual(
+                trace["sections"],
+                [
+                    {"id": "intro", "start_frame": 0, "end_frame": 6},
+                    {"id": "outro", "start_frame": 6, "end_frame": 12},
+                ],
+            )
+            self.assertEqual(len(set(trace["frames"][3:6])), 1)
+            self.assertEqual(len(set(trace["frames"][6:12])), 1)
+            self.assertNotEqual(trace["frames"][5], trace["frames"][6])

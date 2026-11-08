@@ -15,17 +15,19 @@ class Pixels:
 
 class Writer:
     def __init__(self):
-        self.renderer = SimpleNamespace(camera=SimpleNamespace(frame_rate=30))
+        self.video_encoder = SimpleNamespace(frame_rate=30)
         self.calls = []
 
-    def write_frame(self, frame, num_frames=1):
-        self.calls.append((frame, num_frames))
+    def write_frame(self, frame, *, repeat=1):
+        self.calls.append((frame, repeat))
+
+    def abort_encode_jobs(self):
+        pass
 
 
 class FakeScene:
     def __init__(self, writer):
-        self.renderer = writer.renderer
-        self.renderer.file_writer = writer
+        self.renderer = SimpleNamespace(camera=SimpleNamespace(frame_rate=30), file_writer=writer)
         self.calls = []
 
     @property
@@ -56,7 +58,7 @@ class CaptureHooksTests(unittest.TestCase):
         pixels = Pixels()
         with capture_hooks(Writer, FakeScene, "a" * 64) as state:
             s.next_section("intro")
-            w.write_frame(pixels, 2)
+            w.write_frame(pixels, repeat=2)
             s.next_section("next")
             w.write_frame(pixels)
             self.assertEqual(w._scene_production_frame_count, 3)
@@ -106,8 +108,8 @@ class CaptureHooksTests(unittest.TestCase):
                 self.writer_thread.start()
                 self.closed = 0
 
-            def close_partial_movie_stream(self):
-                self.queue.put((-1, None))
+            def abort_encode_jobs(self):
+                self.queue.put(None)
                 self.writer_thread.join(timeout=1)
                 self.closed += 1
 
@@ -119,7 +121,7 @@ class CaptureHooksTests(unittest.TestCase):
             self.assertFalse(writer.writer_thread.is_alive())
             self.assertEqual(writer.closed, 1)
         finally:
-            writer.close_partial_movie_stream()
+            writer.abort_encode_jobs()
 
     def test_cleanup_failure_does_not_replace_original_capture_error(self):
         class BrokenClose(Writer):
@@ -127,7 +129,7 @@ class CaptureHooksTests(unittest.TestCase):
                 super().__init__()
                 self.writer_thread = SimpleNamespace(is_alive=lambda: True)
 
-            def close_partial_movie_stream(self):
+            def abort_encode_jobs(self):
                 raise RuntimeError("cleanup detail")
 
         with self.assertRaisesRegex(ValueError, "next_section") as caught:
@@ -135,11 +137,11 @@ class CaptureHooksTests(unittest.TestCase):
                 BrokenClose().write_frame(Pixels())
         self.assertTrue(any("cleanup detail" in note for note in caught.exception.__notes__))
 
-    def test_rejected_second_writer_containers_are_both_closed(self):
+    def test_rejected_second_writer_encode_jobs_are_both_aborted(self):
         closed = []
         a, b = Writer(), Writer()
-        a.video_container = SimpleNamespace(close=lambda: closed.append("a"))
-        b.video_container = SimpleNamespace(close=lambda: closed.append("b"))
+        a.abort_encode_jobs = lambda: closed.append("a")
+        b.abort_encode_jobs = lambda: closed.append("b")
         with self.assertRaisesRegex(ValueError, "one writer"):
             with capture_hooks(Writer, FakeScene, "a" * 64):
                 FakeScene(a).next_section("intro")
