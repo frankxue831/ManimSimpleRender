@@ -1,5 +1,10 @@
 # 渲染日志重检：固定版本交付清单
 
+> Historical record. Original path: `docs/reviews/2026-11-08-logging-audit-handoff.md`.
+> Findings, commands and validation counts describe the recorded revision and environment,
+> not current acceptance. Historical command paths may refer to the original layout.
+> See the [current guide](../../logging-and-diagnostics.md) and [archive index](../README.md).
+
 交付日期：2026-11-08（Asia/Shanghai）。状态：**代码与本地证据已固定，等待 Grok 独立复核和用户验收**。
 
 本清单用于人工交接。没有向 Grok 发送消息、接入 webhook、创建 PR、推送或合并。

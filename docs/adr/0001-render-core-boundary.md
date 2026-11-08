@@ -3,6 +3,21 @@
 Date: 2026-06-10
 Status: accepted
 
+## Subsequent implementation status (2026-11-08)
+
+The context and extraction trigger below record the original two-consumer decision.
+The implementation now also has `concept_render/` and `scene_production/` consumers
+of `app.render`. The new-consumer extraction trigger has therefore been met, but
+the core remains in `app/render`; extraction is outstanding and is not performed
+by this documentation update. The distribution still ships the GUI, Explainer
+and scene production together, with optional dependency extras.
+
+The Qt boundary remains applicable. `tests/test_architecture.py` also guards scene
+production's Qt-free imports; it does not scan `concept_render/`. Explainer now
+imports shared quality and diagnostic helpers as well as its render adapter's
+dependencies, so the original exact import-count description is historical.
+See the [documentation index](../README.md) for the current tool inventory.
+
 ## Context
 
 The repo has two front-ends sharing one render pipeline:

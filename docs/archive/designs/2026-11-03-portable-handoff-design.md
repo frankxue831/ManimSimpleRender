@@ -1,5 +1,10 @@
 # Portable scene handoff MVP
 
+> Historical record. Original path: `docs/superpowers/specs/2026-11-03-portable-handoff-design.md`.
+> Findings, commands and validation counts describe the recorded revision and environment,
+> not current acceptance. Historical command paths may refer to the original layout.
+> See the [current guide](../../portable-projects.md) and [archive index](../README.md).
+
 Approved goal: a receiver without chat history can inspect an exported project,
 check its environment, render it, change one named scene, and return evidence.
 Use ordinary Manim sources and existing revision manifests/timelines, not a DSL.

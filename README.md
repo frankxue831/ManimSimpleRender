@@ -1,8 +1,14 @@
 # ManimSimpleRender
 
-For explicitly selected editable ordinary Scene inputs, see
-[portable project export and receiving preflight](docs/portable-projects.md).
-Inspection does not execute the project; rendering remains a separate trusted-code action.
+ManimSimpleRender provides a desktop batch renderer and command-line tools for
+source-citing explainers, silent concept drafts and checked ordinary Scene productions.
+
+| Start with your goal | Entry point |
+| --- | --- |
+| Call rendering and inspection from an agent | [Agent quick start](docs/agent-quickstart.md) |
+| Pick and batch-render existing scenes in a window | [Desktop GUI](#also-in-this-repo-desktop-gui) |
+| Explain source code with citations and narration | [Explainer quick start](#quick-start) |
+| Find revision, project transfer or supporting tools | [Documentation index](docs/README.md) |
 
 **Explainer Engine**: turns a short storyboard YAML that cites real source lines into a narrated,
 animated Manim video, and refuses to render if a citation no longer matches the code.
@@ -127,6 +133,9 @@ per-scene results.
   per-scene pass/fail decoration.
 - **Resolution + engine selection** (`-ql`/`-qm`/`-qh`/`-qk`; cairo or OpenGL).
 - Remembers your last folders, resolution, and engine (via `QSettings`).
+- Rerun failed scenes or resume cancelled work; copy selected Manim commands.
+- Open the output folder and export the full persisted batch log. During rendering,
+  exports are marked incomplete snapshots; persistence failures are reported.
 - Dark theme.
 
 ### Requirements
@@ -210,19 +219,15 @@ and handoff time, see [Logging and diagnostics](docs/logging-and-diagnostics.md)
 ```bash
 pip install -r requirements-dev.txt          # adds black + flake8
 QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests   # run the test suite headless
-black --check app explainer tests main.py    # formatting (same as CI)
-flake8 app explainer tests main.py           # linting (same as CI)
+black --check app explainer scene_production tests main.py examples/scenes/netty_eventloop.py examples/scenes/tcp_stream.py examples/scenes/scene_font.py examples/scenes/revision_flow.py examples/revisions/run_flow.py
+flake8 app explainer scene_production tests main.py examples/scenes/netty_eventloop.py examples/scenes/tcp_stream.py examples/scenes/scene_font.py examples/scenes/revision_flow.py examples/revisions/run_flow.py
 ```
 
-CI (GitHub Actions) runs the same checks on every push and pull request. The architecture is
+[CI](.github/workflows/ci.yml) runs these checks on pushes to master and pull requests. The architecture is
 layered — UI → controller → services (config, scenes, environment, render, validation); services
 are Qt-free and unit-tested headless. See `AGENTS.md` for the architecture overview.
 
-## License
-
-[Apache License 2.0](LICENSE).
-
-### Ordinary Manim scenes
+## Ordinary Manim scenes
 
 For hand-authored scenes, `python -m scene_production` (installed command:
 `scene-production`) renders and checks a video without a storyboard compiler.
@@ -242,7 +247,7 @@ Optional, Qt-free helpers for completed production runs:
 
 - [Explicit caption events and SRT sidecars](docs/scene-captions.md)
 - [Existing WAV inputs and separate audio previews](docs/scene-audio.md)
-- [Machine-readable agent attempts](docs/scene-agent.md)
+- [Agent quick start](docs/agent-quickstart.md) and [JSONL protocol reference](docs/scene-agent.md)
 - [Caption-linked frame samples](docs/scene-frame-samples.md)
 
 For local multi-agent coordination around these interfaces, see
@@ -253,4 +258,10 @@ not send Grok Bot notifications or grant permission to execute or publish.
 These helpers create new, hash-bound artifacts. They do not modify retained
 production runs, write captions back into a storyboard, synthesize speech, or
 turn machine checks into visual/semantic approval. See the
-[migration record](docs/migration-public-baseline.md) for scope and deferred work.
+[documentation index](docs/README.md) for current capabilities and the
+[archived migration record](docs/archive/migrations/migration-public-baseline.md)
+for the scope of that historical change.
+
+## License
+
+[Apache License 2.0](LICENSE).

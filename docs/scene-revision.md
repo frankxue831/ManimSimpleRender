@@ -1,5 +1,7 @@
 # Explicit scene revisions
 
+[Documentation index](README.md) | [Agent quick start](agent-quickstart.md)
+
 `python -m scene_production.revision` is a small helper for trusted local, silent
 Manim productions. The caller selects a stable scene ID and writes the code edit.
 It does not understand feedback, author animations, judge explanations, or render

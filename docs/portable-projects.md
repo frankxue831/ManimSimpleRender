@@ -1,5 +1,7 @@
 # Transfer an editable ordinary Scene project
 
+[Documentation index](README.md) | [Agent quick start](agent-quickstart.md)
+
 `python -m scene_production.portable` adds explicit `export`, `inspect`, `unpack`
 and `preflight` steps around the existing rendering/revision tools. It does not
 interpret feedback, install dependencies, execute imported scenes or replace

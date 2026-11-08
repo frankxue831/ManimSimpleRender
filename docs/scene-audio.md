@@ -1,5 +1,7 @@
 # Explicit WAV audio previews
 
+[Documentation index](README.md) | [Agent quick start](agent-quickstart.md)
+
 `scene_production.audio` is a Qt-free, trusted-local service for attaching
 **existing, explicitly selected WAV files** to an existing caption sidecar.
 It never generates speech, uploads files, edits scene source, retimes captions,
@@ -110,19 +112,11 @@ inconsistent or changed retained inputs; it is not a sandbox, a signed
 provenance system, or protection against a producer rewriting every record.
 Do not mutate inputs concurrently with binding or preview creation.
 
-## Migration scope
+## Implementation and history
 
-This service selectively reworks useful contracts from the earlier
-`app/render/voice_bridge.py` and `voice_tools/{prepare_from_srt,preflight,make_preview}.py`:
-explicit mapping, strict WAV completeness and timing checks, frozen identities,
-new output directories, bounded subprocesses, and honest review-required
-results. It does not import or copy that whole pipeline.
-
-Not migrated: the old `staged_caption` dependency, Qt dialogs/workers, external
-runtime launcher, job recovery UI, automatic TTS, SRT-index mapping, clip
-selection, subtitle embedding, and video re-encoding. Captions remain a
-separate sidecar; the audio preview contains only the original video and an
-audio track. No storyboard or silent-revision integration is implied.
+Captions remain a separate sidecar; the audio preview contains the original video
+and an added audio track. For prototype origins and the original migration scope,
+see the [archived migration record](archive/migrations/migration-public-baseline.md).
 
 ## Verification
 

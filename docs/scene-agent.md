@@ -1,5 +1,7 @@
 # Scene production agent protocol
 
+[Documentation index](README.md) | [Agent quick start](agent-quickstart.md)
+
 `python -m scene_production.agent describe|render|inspect` is an opt-in,
 Qt-free JSONL interface over the existing synchronous `render` and `reinspect`
 APIs. It does not replace `scene-production` or `python -m scene_production`.
@@ -146,14 +148,11 @@ and wrapper `phase`. No extra stdout events are emitted. See
 [logging-and-diagnostics.md](logging-and-diagnostics.md) for the phase sidecar,
 failure reasons, privacy limits and timing interpretation.
 
-## Migration scope and verification
+## Verification and history
 
-The experimental `app/render/staged_caption.py` supplied the design ideas for
-JSONL events, an early run token, structured invocation fields, explicit
-terminal rules and attempt-associated diagnostics. Its old render/staging/copy
-pipeline, caption-specific command graph, raw log excerpt emission, voice
-workflow and verify command were not migrated here. Public scene production
-and reinspection remain the execution and media-checking implementation.
+See the [archived migration record](archive/migrations/migration-public-baseline.md)
+for the prototype origins and original migration scope. This interface uses the
+public production and reinspection APIs described above.
 
 `tests/test_production_agent.py` covers argument errors, token/state/journal
 consistency, directory exclusivity, stale attempts, raw fd output, SIGINT and

@@ -4,6 +4,10 @@
 over `scene_production.agent`. The existing render, inspect, revision and GUI
 interfaces are unchanged. Run `describe` for the machine-readable entry point.
 
+Start with the [agent quick start](agent-quickstart.md) for a single rendering agent.
+Use this coordination layer when local workers need durable dependencies and claims.
+See the [documentation index](README.md) for other workflows.
+
 This first phase provides durable dependency records, exclusive task claims,
 leases and fencing, authorization-source handoff, and a local pull inbox with
 explicit acknowledgement. It does **not** connect to Grok Bot, send messages,
@@ -16,9 +20,10 @@ received it.
 The supplied November 7 Grok Bot collaboration review described normal Task
 completion and Mac Shell invocation, but did not establish a stable public
 failure/approval subscription, offline delivery guarantee, or recipient-acceptance
-ACK. Its MSR analysis targeted `80891ab`; the current `006f3e9` baseline already
-has the JSONL agent wrapper. This implementation reuses that wrapper rather than
-creating another renderer or treating internal Grok protocols as supported APIs.
+ACK. Its MSR analysis targeted `80891ab`; at the time this layer was introduced,
+the `006f3e9` baseline already had the JSONL agent wrapper. This layer reuses that
+wrapper rather than creating another renderer or treating internal Grok protocols
+as supported APIs.
 
 SQLite is embedded, standard-library storage in a new private workflow directory.
 It gives this single-machine workflow atomic claims and state/event transactions

@@ -1,5 +1,7 @@
 # Explicit caption sidecars
 
+[Documentation index](README.md) | [Agent quick start](agent-quickstart.md)
+
 `scene_production.captions` attaches author-supplied caption annotations to an
 existing successful public `scene_production` render receipt. It does not render
 again, execute the recorded or current scene source, call OCR/TTS, modify a
@@ -133,14 +135,10 @@ nothing. It refuses changed timing, multiple text changes, no-op edits and
 another encoded video. It never claims pixel equivalence or acceptance across
 different encodings and does not update source or storyboard content.
 
-## Migration scope
+## Implementation and history
 
-The small Qt-free author-event and SRT primitives were selected from the local
-prototype's `app/render/caption_events.py` and `subtitle_draft.py`, with their unit
-tests. Validation and coverage calculations now share the same draft contract.
-The production adapter is new and targets the public successful-run layout.
-
-The prototype's `staged_caption` renderer, GUI integration, external caption
-runtime, caption preview renderer, automatic text-to-scene editing and broad
-cross-video caption acceptance were deliberately not migrated. There is one
-production rendering path, with these annotations attached afterward.
+Author events and SRT derivation use the Qt-free `app.render.caption_events` and
+`app.render.subtitle_draft` helpers. The production adapter binds annotations to a
+successful public render; it does not create another rendering path. See the
+[archived migration record](archive/migrations/migration-public-baseline.md) for
+prototype origins and the original scope decisions.

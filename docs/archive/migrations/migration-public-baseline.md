@@ -1,5 +1,10 @@
 # Selected migration onto the public baseline
 
+> Historical record. Original path: `docs/migration-public-baseline.md`.
+> Findings, commands and validation counts describe the recorded revision and environment,
+> not current acceptance. Historical command paths may refer to the original layout.
+> See the [current guide](../../README.md) and [archive index](../README.md).
+
 Base: public `80891ab5969e90ba3b19c4dbaac36f0b04650219` (including PRs #21-23).
 Reference: the isolated `agent-visual-repair-lab/source` candidate descended from
 the old `72c3c9536d5331238413096bf9ae200eb63c9627` history, through fixes 26 and 27.
@@ -23,6 +28,10 @@ boundaries. The archived local handoff records exact file hashes and regression
 results for this migration; repository documentation does not imply publication.
 
 ## Deliberately not migrated
+
+> This list describes the scope at base `80891ab`. The later
+> [local handoff layer](../../agent-handoff.md) added leases and task coordination
+> separately. Consult the [current index](../../README.md) for today's capabilities.
 
 - The old `staged_caption.run/verify` production chain and
   `external_caption_runtime` launch path. They duplicate public scene production

@@ -6,7 +6,11 @@ This file provides guidance to coding agents (Codex, Claude Code, and others) wo
 
 ManimSimpleRender holds two products. The Explainer Engine (`explainer/`) is a CLI that compiles storyboard YAML through a citation gate into deterministic Manim codegen and a narrated video. The desktop GUI (`app/`) is a PyQt5 application that discovers the Manim scenes in a folder of Python files and batch-renders the ones the user selects.
 
-The two verticals share one Qt-free render core (`app/render`), per `docs/adr/0001-render-core-boundary.md`. `explainer/` may import only `app.render.*` (never `app.render.worker`); nothing imports back from it. The boundary is enforced by `tests/test_architecture.py`. `concept_render/`, a smaller source-checkout-only CLI for silent concept drafts (`docs/concept-render.md`), also imports `app.render`; `tests/test_architecture.py` does not scan it. `scene_production/` renders trusted ordinary scenes and checks media; its Qt-free imports are guarded by the same test file.
+These workflows share one Qt-free render core (`app/render`), per `docs/adr/0001-render-core-boundary.md`. `explainer/` may import only `app.render.*` (never `app.render.worker`); nothing imports back from it. The boundary is enforced by `tests/test_architecture.py`. `concept_render/`, a smaller source-checkout-only CLI for silent concept drafts (`docs/concept-render.md`), also imports `app.render`; `tests/test_architecture.py` does not scan it. `scene_production/` renders trusted ordinary scenes and checks media; its Qt-free imports are guarded by the same test file.
+
+For tool selection, see the [documentation index](docs/README.md). Agents invoking
+renders should start with the [agent quick start](docs/agent-quickstart.md), then
+read the [protocol reference](docs/scene-agent.md) for completion and recovery rules.
 
 ## Architecture
 
@@ -22,7 +26,7 @@ Services never import the UI; only the render worker imports Qt.
 - **app/render/**: `jobs.py` (`RenderJob` + `build_jobs` + `media_output_collisions`), `command_builder.py` (pure manim argv), `runner.py` (Qt-free subprocess), `process_session.py` (bounded, Qt-free supervision of one render subprocess: process-group spawn, terminate->kill escalation), `worker.py` (QThread adapter), `aggregation.py` (`RenderSummary`), `quality.py` (canonical manim quality ladder; see `docs/adr/0001-render-core-boundary.md`).
 - **app/ui/**: `main_view.py` (passive window), `sections.py`, `theme.py` + `theme.qss` (external dark theme), `controller.py` (state machine + QSettings).
 - **app/validation.py**: Pure pre-render validation.
-- **explainer/**: `storyboard/` (YAML IR + loader), `cite/` (citation gate: checks that the cited lines contain the evidence the storyboard declares, as whole words, with evidence on the first and last cited lines; if the storyboard names a commit, also that HEAD matches it and the tree is clean unless `allow_dirty`), `codegen/` (deterministic Manim scene emission, diagram canvas), `plan/` (LLM planner drafting storyboards from real code; providers behind a fake-able protocol), `render/adapter.py` (the only cross-package edge, into `app.render`), `cli.py` (`explainer verify|render|plan`).
+- **explainer/**: `storyboard/` (YAML IR + loader), `cite/` (citation gate: checks that the cited lines contain the evidence the storyboard declares, as whole words, with evidence on the first and last cited lines; if the storyboard names a commit, also that HEAD matches it and the tree is clean unless `allow_dirty`), `codegen/` (deterministic Manim scene emission, diagram canvas), `plan/` (LLM planner drafting storyboards from real code; providers behind a fake-able protocol), `render/adapter.py` (render integration into `app.render`; the CLI also imports shared quality helpers), `cli.py` (`explainer verify|render|plan`).
 - **tests/**: Headless unit tests plus `tests/e2e/` (fake-manim GUI/worker tiers + a real-render smoke that CI runs nightly), `tests/explainer_tests/`, `tests/support/` (shared fixtures), and `tests/test_architecture.py` (executable ADR 0001 boundary).
 
 ## Key Components
@@ -67,7 +71,9 @@ Read `docs/agent-handoff.md` before changes.
 Keep these modules Qt-free and preserve public production/revision/portable
 behavior. Image2 output patterns must be fixed relative names with an explicit
 exclusive output cwd; never include user-selected ancestor paths in a pattern.
-See `docs/migration-public-baseline.md` and each helper's usage document.
+See the [current documentation index](docs/README.md) and each helper's usage
+reference. The [archived migration record](docs/archive/migrations/migration-public-baseline.md)
+describes the original migration scope, not a current capability inventory.
 
 ### Running the Application
 ```bash
@@ -100,7 +106,7 @@ QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests
 black --check app explainer scene_production tests main.py
 flake8 app explainer scene_production tests main.py
 ```
-Fast CI (`.github/workflows/ci.yml`) runs these on py3.12 + py3.13 without manim installed (services are Qt-free-testable; explainer tests skip their one manim-touching check). The nightly workflow installs the full render toolchain and runs the real-render e2e smoke.
+Fast CI (`.github/workflows/ci.yml`) runs headless tests on py3.12 + py3.13 without manim installed; checks needing unavailable render dependencies skip. Its formatting and linting steps also include the selected example paths listed in the README. The nightly workflow installs the full render toolchain and runs the real-render e2e smoke.
 
 ### Explainer CLI
 ```bash
@@ -124,7 +130,7 @@ Example storyboard: `examples/evidence-budget.story.yaml` (cites this repo's own
 - `app/`: Application package — `bootstrap.py`, `config/`, `environment/`, `scenes/`, `render/`, `ui/`, `validation.py`
 - `explainer/`: The CLI vertical — `storyboard/`, `cite/`, `codegen/`, `plan/`, `render/`, `cli.py`
 - `tests/`: Headless unit tests. Run: `python -m unittest discover -s tests` (the window smoke test needs `QT_QPA_PLATFORM=offscreen`)
-- `docs/`: `adr/` (architecture decision records) and `concept-render.md`
+- `docs/`: current guides and navigation in `README.md`; `adr/` holds architecture decisions, and `archive/` holds historical plans, experiments and reviews
 - `examples/`: Explainer storyboard examples (e.g., `evidence-budget.story.yaml`)
 - `examples/scenes/`: Demo Manim scenes for the GUI (e.g., `proxy_pattern_scene.py`). `test_debugging_workflow*.py` there are Manim scenes, not tests; pytest is pointed at `tests/` only
 - `output/`: Default output directory for rendered videos

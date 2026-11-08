@@ -1,13 +1,15 @@
 # Render logging and diagnostics
 
-This inventory and audit covers the GUI, public scene production/reinspection,
-agent protocol, local handoff runner and explainer render adapter. The starting
-revision was `c449fd2`. No historical EP3 log files were available in this
-checkout audit; timing guidance below describes what new runs can establish.
+[Documentation index](README.md) | [Agent quick start](agent-quickstart.md)
+
+This guide covers the GUI, public scene production/reinspection,
+agent protocol, local handoff runner and explainer render adapter. Timing guidance
+describes what recorded runs can establish.
+Historical validation results are in the [logging verification record](archive/reviews/2026-11-08-logging-verification.md).
 
 ## What is recorded
 
-| Entry point | Existing evidence | Added diagnostic evidence |
+| Entry point | Existing evidence | Diagnostic evidence |
 | --- | --- | --- |
 | GUI | Per-batch `render-*.log` under the selected output directory; command and merged Manim output; in-memory scene results and capped log view | UTC time on each received line; batch ID; job start/end, exit code, outcome, monotonic duration; explicit skipped-job records; persistence warnings; complete disk-log export |
 | `scene-production` / `scene_production.render` | Exclusive `scene-*/` run; `render.log`, frozen source/timeline, `result.json`, video/frame hashes, optional frame trace | Private `diagnostics.jsonl` with prepare/render/provenance/artifact/probe/decode/frames/integrity/publication phases; render outcome/exit code; distinct deadline, cancellation and tool-timeout reasons |
@@ -137,7 +139,7 @@ PY
 A truncated final line can occur after a crash or disk failure. Preserve the
 file and inspect its complete preceding records; do not fabricate a finish time.
 
-## Interpreting timing, including an EP3-style retrospective
+## Interpreting timing
 
 JSONL records use `schema_version: 1`, a per-file `sequence`, UTC `timestamp`,
 and process-local monotonic `elapsed_seconds`. Phase end/failure records carry
@@ -165,7 +167,7 @@ summing their durations. UTC helps correlate processes but can jump with clock
 adjustments; monotonic clocks measure durations only within one process. A gap
 between records is unobserved time, not automatically idle time. File mtime,
 the timestamp of a UI batch and a receipt's provisional status are not substitutes
-for task boundaries. These records do not retroactively fill holes in EP3.
+for task boundaries. These records cannot reconstruct unrecorded past workflow stages.
 
 ## Compatibility, privacy and remaining limits
 
@@ -218,64 +220,8 @@ real Manim/ffmpeg renders. They do not certify semantic video quality, real
 human review, power loss, Windows ACL behavior, remote delivery, reboot recovery
 or disk-stall bounds. The real logging smoke uses no TTS or LaTeX.
 
-## Verification of this change
+## Historical validation
 
-The initial lightweight run on November 8, 2026 used Python 3.13 on macOS with
-Qt offscreen and ran 1184 tests:
-1165 passed and 19 were skipped for unavailable real Manim/TTS or platform
-requirements. Black and Flake8 passed for the same source/example paths checked
-by CI; `git diff --check` passed. The citation-gate example was updated to its
-new source line range and its `explainer verify` command passed.
-
-Regression coverage includes sparse GUI output, full-log export and same-file
-protection, disk write failures, forced QThread termination without a lingering
-flusher, late timer callbacks, private early-failure tracebacks, unchanged
-two-event agent stdout, handoff protocol inconsistency, and sanitized failure
-reason propagation. The complete test suite also exercises the existing
-architecture, portable output, revision and conservative recovery contracts.
-
-```sh
-QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest discover -s tests -v
-.venv/bin/python -m black --check app explainer scene_production tests main.py
-.venv/bin/python -m flake8 app explainer scene_production tests main.py
-git diff --check
-```
-
-The real-render follow-up used Manim 0.20.1 and ffmpeg/ffprobe 9.0.2 in this
-worktree's isolated environment. The existing real-render smoke passed. New
-`tests/e2e/test_real_logging_smoke.py` runs Agent and handoff success/failure
-through actual CLI subprocesses, checking video/frame hashes, phase records,
-private-output isolation and exact stdout/state/journal agreement. It gates on
-Manim, ffmpeg and ffprobe so the lightweight CI still skips it, while the
-existing nightly e2e discovery includes it automatically.
-
-Additional retained local smoke evidence checked a real scene timeout after
-entering `construct`, a successful recorded-video reinspection without a new
-render, and success/failure through the GUI worker with real subprocesses. The
-worker was driven synchronously for this evidence; QThread scheduling and forced
-termination are covered separately by isolated regression tests.
-
-Two independent second-pass code reviews covered sensitive data, exception
-semantics, optional versus mandatory persistence, thread shutdown and export
-behavior. A known-incomplete log exported to itself or a hardlink previously
-lost its warning in the GUI status; this was fixed and regression-tested. No
-remaining blocking findings were identified within that review scope.
-
-After this fix and the real smoke additions, the full suite ran **1187 tests:
-1176 passed, 11 skipped**, in 36.126 seconds. Skips were nine tests requiring
-the uninstalled voiceover package, one real Windows process test and one
-environment-dependent Qt scrollbar check. Black, Flake8 and `git diff --check`
-passed. No real TTS, OpenGL render, full interactive GUI acceptance or human
-semantic review is claimed.
-
-```sh
-QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest \
-  tests.e2e.test_real_render_smoke tests.e2e.test_real_logging_smoke -v
-```
-
-The PR 26 review follow-up ran **1210 tests: 1199 passed, 11 skipped**, in
-35.802 seconds on the same local Python 3.13 environment. The skip categories
-above are unchanged. Black, Flake8 and citation-gate example verification passed.
-See the separate [review response and evidence checklist](reviews/2026-11-08-pr26-review-followup.md)
-for reproduced findings, fixes and remaining limitations. The earlier frozen
-handoff describes the original PR head, not these follow-up changes.
+See the [November 8 logging verification record](archive/reviews/2026-11-08-logging-verification.md)
+and [PR 26 review follow-up](archive/reviews/2026-11-08-pr26-review-followup.md)
+for revision-specific test runs, findings and remaining limitations.

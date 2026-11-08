@@ -1,5 +1,7 @@
 # Ordinary Scene production
 
+[Documentation index](README.md) | [Agent quick start](agent-quickstart.md)
+
 This optional CLI renders a trusted ordinary Manim `Scene`, then checks the
 resulting media. It does not generate scenes or judge teaching quality.
 
@@ -59,9 +61,12 @@ existing receipt contents and permissions are unchanged. Raw logs and receipts
 can contain private paths or scene output, so inspect them before sharing. A
 failure receipt adds a fixed `failure_reason` and a safe `exception_type`.
 The reason is one of
-`render_timeout`, `cancelled`, `executable_not_found`, `render_failed`,
-`tool_timeout`, or the fallback `exception`. Render timeout covers the render
-runner call, including its output draining and cleanup. A late timer callback
+`render_timeout`, `render_cleanup_timeout`, `cancelled`, `interrupted`,
+`executable_not_found`, `render_failed`, `tool_timeout`, or the fallback `exception`.
+Render timeout covers the render runner call, including output draining and cleanup.
+`render_cleanup_timeout` distinguishes a deadline after the leader's exit was
+observed but before API completion; it remains a failure. Interruption also records
+`process_cleanup_verified: false`. A late timer callback
 after observed runner completion cannot turn success into timeout. Diagnostic
 write failure emits a generic warning and does not alter the render outcome;
 raw render-log failures continue to fail the operation.
@@ -92,7 +97,7 @@ calls and pass `--record-scene-frames`. Call `self.next_section("stable-id")`
 in `render.log`. The ordinary flag-off path has no such tracing requirement. This records actual section frame bounds
 and pre-encoding RGBA hashes; traced previews select exact decoded frame indices.
 See [scene revision usage and limits](scene-revision.md) and the
-[controlled experiment evidence](scene-revision-experiments.md). Ordinary rendering
+[controlled experiment evidence](archive/evaluations/scene-revision-experiments.md). Ordinary rendering
 remains the default, and machine checks do not establish semantic correctness.
 
 
