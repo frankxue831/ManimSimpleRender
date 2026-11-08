@@ -106,6 +106,57 @@ class AgentProtocolTests(unittest.TestCase):
             terminal["artifacts"]["video"]["sha256"], hashlib.sha256(b"vid").hexdigest()
         )
 
+    def test_phase_timing_does_not_add_protocol_events_or_private_input(self):
+        with patch("scene_production.render", side_effect=self.successful_api):
+            code, events = self.invoke(self.arguments())
+        self.assertEqual(code, 0)
+        self.assertEqual([item["event"] for item in events], ["started", "terminal"])
+        self.assertTrue(all(item["timestamp"].endswith("Z") for item in events))
+        self.assertGreaterEqual(events[-1]["elapsed_seconds"], events[0]["elapsed_seconds"])
+        self.assertEqual(events[-1]["phase"], "complete")
+        timeline = [
+            json.loads(line)
+            for line in (self.output / "diagnostics.jsonl").read_text().splitlines()
+        ]
+        self.assertTrue(all(item["run_token"] == events[0]["run_token"] for item in timeline))
+        finished = [item["phase"] for item in timeline if item["event"] == "phase_finished"]
+        self.assertEqual(
+            finished, ["initial_persistence", "started_delivery", "operation", "verification"]
+        )
+        self.assertFalse(events[-1]["diagnostics"]["timeline_write_failed"])
+        self.assertNotIn(str(self.output), json.dumps(timeline))
+
+    def test_timeline_unavailable_is_visible_without_changing_success(self):
+        real_open = os.open
+
+        def open_file(path, *args, **kwargs):
+            if Path(path).name == "diagnostics.jsonl":
+                raise OSError("private mount secret")
+            return real_open(path, *args, **kwargs)
+
+        with (
+            patch("app.render.diagnostics.os.open", side_effect=open_file),
+            patch("scene_production.render", side_effect=self.successful_api),
+        ):
+            code, events = self.invoke(self.arguments())
+        self.assertEqual(code, 0)
+        self.assertTrue(events[-1]["diagnostics"]["timeline_write_failed"])
+        self.assertNotIn("private mount", json.dumps(events))
+
+    def test_unknown_records_interrupted_phase_without_claiming_cleanup(self):
+        with patch("scene_production.render", side_effect=KeyboardInterrupt):
+            code, events = self.invoke(self.arguments())
+        self.assertEqual(code, 130)
+        self.assertEqual(events[-1]["phase"], "operation")
+        timeline = [
+            json.loads(line)
+            for line in (self.output / "diagnostics.jsonl").read_text().splitlines()
+        ]
+        failed = [item for item in timeline if item["event"] == "phase_failed"]
+        self.assertEqual(failed[-1]["phase"], "operation")
+        self.assertEqual(failed[-1]["exception_type"], "KeyboardInterrupt")
+        self.assertFalse(events[-1]["retry_safe"])
+
     def test_existing_directory_is_never_claimed_or_its_logs_associated(self):
         self.output.mkdir()
         marker = self.output / "attempt.json"
@@ -146,6 +197,8 @@ class AgentProtocolTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertNotIn("private-", json.dumps(events))
         self.assertIn("private-output-secret", (self.output / "api.log").read_text())
+        self.assertIn("private-exception-secret", (self.output / "api.log").read_text())
+        self.assertNotIn("private-", (self.output / "diagnostics.jsonl").read_text())
         self.assertEqual(events[-1]["error"]["code"], "operation_failed")
         self.assertFalse(events[-1]["retry_safe"])
 
@@ -207,6 +260,26 @@ class AgentProtocolTests(unittest.TestCase):
         event = json.loads(result.stdout)
         self.assertEqual(event["event"], "terminal")
         self.assertEqual(result.stderr, "")
+
+    def test_real_early_api_failure_keeps_traceback_only_in_private_capture(self):
+        arguments = self.arguments()
+        arguments[arguments.index("--scene-file") + 1] = str(self.root / "PRIVATE_MISSING.py")
+        result = subprocess.run(
+            [sys.executable, "-m", "scene_production.agent", *arguments],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr, "")
+        events = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual([item["event"] for item in events], ["started", "terminal"])
+        self.assertEqual(events[-1]["error"]["code"], "input_or_tool_missing")
+        self.assertEqual(events[-1]["phase"], "operation")
+        self.assertIn("PRIVATE_MISSING.py", (self.output / "api.log").read_text())
+        self.assertNotIn("PRIVATE_MISSING.py", result.stdout)
+        self.assertNotIn("PRIVATE_MISSING.py", (self.output / "diagnostics.jsonl").read_text())
 
     def test_foreign_exception_receipt_is_not_associated(self):
         other = self.root / "old" / "result.json"

@@ -791,6 +791,96 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(called, [])  # didn't even prompt
         self.assertIn("empty", view.status_label.text().lower())
 
+    def test_save_log_exports_disk_history_beyond_visible_tail(self):
+        view, controller, _ = self._make()
+        view.log_area.document().setMaximumBlockCount(2)
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "render-source.log")
+            target = os.path.join(directory, "saved.log")
+            content = "old output\nnew output\nlatest output\n"
+            with open(source, "w", encoding="utf-8") as handle:
+                handle.write(content)
+            controller._on_log_file_ready(source)
+            view.append_render_log(content.rstrip())
+            self.assertNotIn("old output", view.log_text())
+            view.prompt_save_log = lambda: target
+            view.save_log_requested.emit()
+            with open(target, encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), content)
+            self.assertIn("snapshot", view.status_label.text())
+
+    def test_save_log_same_file_or_hardlink_does_not_truncate_original(self):
+        view, controller, _ = self._make()
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "render-source.log")
+            alias = os.path.join(directory, "alias.log")
+            with open(source, "w", encoding="utf-8") as handle:
+                handle.write("retained output\n")
+            os.link(source, alias)
+            controller._on_log_file_ready(source)
+            for target in (source, alias):
+                view.prompt_save_log = lambda: target
+                view.save_log_requested.emit()
+                with open(source, encoding="utf-8") as handle:
+                    self.assertEqual(handle.read(), "retained output\n")
+                self.assertIn("no copy needed", view.status_label.text())
+
+    def test_save_log_marks_failed_disk_capture_as_partial(self):
+        view, controller, _ = self._make()
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "render-source.log")
+            target = os.path.join(directory, "saved.log")
+            with open(source, "w", encoding="utf-8") as handle:
+                handle.write("retained prefix\n")
+            controller._on_log_file_ready(source)
+            controller._on_logging_failed("Disk logging failed during write; log incomplete.")
+            view.prompt_save_log = lambda: target
+            view.save_log_requested.emit()
+            with open(target, encoding="utf-8") as handle:
+                content = handle.read()
+            self.assertTrue(content.startswith("WARNING:"))
+            self.assertIn("retained prefix", content)
+            self.assertIn("Partial", view.status_label.text())
+
+    def test_same_file_export_keeps_incomplete_warning_without_altering_log(self):
+        view, controller, _ = self._make()
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "render-source.log")
+            alias = os.path.join(directory, "alias.log")
+            content = "retained prefix\n"
+            with open(source, "w", encoding="utf-8") as handle:
+                handle.write(content)
+            os.link(source, alias)
+            controller._on_log_file_ready(source)
+            controller._on_logging_failed("Disk logging failed during write; log incomplete.")
+            for target in (source, alias):
+                with self.subTest(target=target):
+                    view.prompt_save_log = lambda: target
+                    view.save_log_requested.emit()
+                    self.assertIn("no copy needed", view.status_label.text())
+                    self.assertIn("disk log is incomplete", view.status_label.text())
+                    self.assertEqual(view.status_label.property("level"), "error")
+                    with open(source, encoding="utf-8") as handle:
+                        self.assertEqual(handle.read(), content)
+
+    def test_disk_log_failure_remains_visible_after_thread_finishes(self):
+        view, controller, _ = self._make()
+        controller._on_logging_failed("Disk logging failed during write")
+        controller._on_summary(RenderSummary(succeeded=1))
+        controller._on_thread_finished()
+        self.assertIn("1 succeeded", view.status_label.text())
+        self.assertIn("disk log is incomplete", view.status_label.text())
+
+    def test_save_removed_log_reports_failure_even_for_same_path(self):
+        view, controller, _ = self._make()
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "removed.log")
+            controller._on_log_file_ready(path)
+            view.prompt_save_log = lambda: path
+            view.save_log_requested.emit()
+            self.assertIn("Could not save log", view.status_label.text())
+            self.assertFalse(os.path.exists(path))
+
     def test_close_teardown_is_idempotent(self):
         # Repeated direct shutdown requests must not cancel twice or block the UI.
         view, controller, created = self._make()

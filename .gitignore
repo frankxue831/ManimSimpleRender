@@ -163,6 +163,7 @@ cython_debug/
 # Manim-specific ignores
 media/
 output/
+.explainer-logs/
 
 # VS Code settings (ignore local config, keep the shared curated settings.json)
 .vscode/*

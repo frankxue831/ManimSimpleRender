@@ -183,6 +183,12 @@ CLI commands return one JSON response. `run` exits 0 for succeeded, 1 for failed
 and 3 for unknown; inspect the structured result as well as the exit code.
 Rejected requests exit 1 without echoing private input or exception text.
 
+Each new runner attempt also writes a private diagnostic phase timeline and
+retains a fixed failure phase/cause when possible. These records do not change
+claim, completion or recovery rules. See
+[logging-and-diagnostics.md](logging-and-diagnostics.md) for the complete log
+inventory and how to separate waiting, rendering, checking and handoff time.
+
 ## Execution and recovery rules
 
 - Claim and state/event changes use SQLite transactions. Two workers cannot

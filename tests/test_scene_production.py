@@ -142,9 +142,13 @@ class PipelineTests(unittest.TestCase):
             event = threading.Event()
             if cancelled:
                 event.set()
-            with self.assertRaisesRegex(RuntimeError, "timed out or cancelled"):
+            message = "render cancelled" if cancelled else "render timed out"
+            with self.assertRaisesRegex(RuntimeError, message):
                 self.invoke(runner=self.runner("timeout"), timeout=0.02, cancel_event=event)
             self.assertEqual(self.receipt()["stage"], "render")
+            self.assertEqual(
+                self.receipt()["failure_reason"], "cancelled" if cancelled else "render_timeout"
+            )
 
     def test_each_inspection_failure_has_failed_stage(self):
         from unittest.mock import patch

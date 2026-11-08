@@ -195,12 +195,20 @@ class MainView(QMainWindow):
         self.progress_bar.setRange(0, 0)
 
     def append_log(self, message):
+        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        self.append_render_log(f"[{timestamp}] {message}")
+
+    def append_render_log(self, message):
+        """Append plain text already timestamped when the worker received it."""
         # Auto-scroll only when the user is already at the bottom, so scrolling up to
         # read earlier output during a verbose render is not yanked back (BL-12).
         scrollbar = self.log_area.verticalScrollBar()
         at_bottom = scrollbar.value() >= scrollbar.maximum() - 4
-        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        self.log_area.append(f"[{timestamp}] {message}")
+        cursor = QTextCursor(self.log_area.document())
+        cursor.movePosition(QTextCursor.End)
+        if not self.log_area.document().isEmpty():
+            cursor.insertBlock()
+        cursor.insertText(message)
         if at_bottom:
             self.log_area.moveCursor(QTextCursor.End)
             scrollbar.setValue(scrollbar.maximum())

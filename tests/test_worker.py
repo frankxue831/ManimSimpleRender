@@ -8,12 +8,20 @@ so no real subprocess or thread is involved.
 """
 
 import glob
+import json
 import os
+from pathlib import Path
+import subprocess
+import sys
 import tempfile
+import textwrap
+import threading
 import unittest
+from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt5.QtCore import Qt  # noqa: E402
 from PyQt5.QtWidgets import QApplication  # noqa: E402
 
 from app.render.aggregation import JobOutcome  # noqa: E402
@@ -156,7 +164,7 @@ class RenderWorkerRunTests(unittest.TestCase):
         logs = []
         worker.log.connect(logs.append)
         worker.run()
-        cmd_lines = [line for line in logs if line.startswith("$ ")]
+        cmd_lines = [line for batch in logs for line in batch.splitlines() if "] $ " in line]
         self.assertEqual(len(cmd_lines), 2)
         self.assertIn("A", cmd_lines[0])
         self.assertIn("-ql", cmd_lines[0])
@@ -228,6 +236,153 @@ class RenderWorkerRunTests(unittest.TestCase):
 
 
 class WorkerLogAndResultTests(unittest.TestCase):
+    def test_forced_thread_stop_does_not_leave_log_helper_alive(self):
+        # QThread.terminate can bypass Python finally. Keep the actual forced
+        # stop in a child interpreter, including the abandoned-lock case, so it
+        # cannot poison this test runner's Python/Qt thread state.
+        script = textwrap.dedent("""
+            import json
+            import sys
+            import tempfile
+            import threading
+            import time
+
+            from PyQt5 import sip
+            from PyQt5.QtCore import QCoreApplication, Qt
+            from app.render.jobs import RenderJob
+            from app.render.worker import RenderWorker
+
+            app = QCoreApplication([])
+            reached = threading.Event()
+            block = threading.Event()
+            mode = sys.argv[1]
+            seen = []
+
+            class BlockingLog:
+                def __init__(self, handle):
+                    self.handle = handle
+                    self.name = handle.name
+
+                def write(self, text):
+                    if "blocked write" in text:
+                        reached.set()
+                        block.wait(60)
+                    return self.handle.write(text)
+
+                def close(self):
+                    self.handle.close()
+
+            class Worker(RenderWorker):
+                def _open_log_file(self):
+                    handle = super()._open_log_file()
+                    return BlockingLog(handle) if mode == "write" else handle
+
+            class Runner:
+                def run_job(self, job, command, cancel, on_log):
+                    on_log("blocked write" if mode == "write" else "pending output")
+                    reached.set()
+                    block.wait(60)
+
+            with tempfile.TemporaryDirectory() as output:
+                worker = Worker([RenderJob("a.py", "A")], "-ql", "", output, runner=Runner())
+                worker.log.connect(seen.append, type=Qt.DirectConnection)
+                worker.start()
+                assert reached.wait(3), "render did not reach forced-stop boundary"
+                time.sleep(0.3)  # Let the helper contend with the blocked write.
+                helpers = [t for t in threading.enumerate() if t.name.startswith("msr-log-flush-")]
+                assert len(helpers) == 1, "expected a live flush helper before termination"
+                worker.terminate()
+                assert worker.wait(2000), "forced stop or helper cleanup did not finish"
+                assert not helpers[0].is_alive(), "flush helper survived QThread.finished"
+                count = len(seen)
+                sip.delete(worker)
+                time.sleep(0.3)
+                assert len(seen) == count, "helper emitted after worker deletion"
+                print(json.dumps({"mode": mode, "helper_stopped": True}))
+            """)
+        for mode in ("runner", "write"):
+            with self.subTest(mode=mode):
+                result = subprocess.run(
+                    [sys.executable, "-c", script, mode],
+                    cwd=Path(__file__).resolve().parents[1],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(json.loads(result.stdout), {"mode": mode, "helper_stopped": True})
+
+    def test_lifecycle_identifies_attempted_and_skipped_jobs(self):
+        jobs = [RenderJob("a.py", "A"), RenderJob("b.py", "B")]
+        with tempfile.TemporaryDirectory() as out:
+            worker = RenderWorker(jobs, "-ql", "", out, runner=FakeRunner(cancel_after=1))
+            paths = []
+            worker.log_file_ready.connect(paths.append)
+            worker.run()
+            self.assertEqual(len(paths), 1)
+            with open(paths[0], encoding="utf-8") as handle:
+                lines = handle.read().splitlines()
+            if os.name == "posix":
+                self.assertEqual(os.stat(paths[0]).st_mode & 0o777, 0o600)
+        for line in lines:
+            self.assertRegex(line, r"^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\] ")
+        events = [json.loads(line.split("] ", 1)[1]) for line in lines if "] {" in line]
+        self.assertEqual(len({event["batch_id"] for event in events}), 1)
+        self.assertEqual(events[0]["event"], "batch_started")
+        self.assertEqual(events[-1]["event"], "batch_finished")
+        results = [event for event in events if event["event"] == "job_finished"]
+        self.assertEqual([event["job_index"] for event in results], [1, 2])
+        self.assertEqual([event["outcome"] for event in results], ["success", "cancelled"])
+        self.assertGreaterEqual(results[0]["duration_ms"], 0)
+        self.assertIsNone(results[1]["duration_ms"])
+        self.assertFalse(results[1]["started"])
+
+    def test_sparse_output_is_visible_and_persisted_before_job_completes(self):
+        visible = threading.Event()
+
+        class SparseRunner:
+            def run_job(inner, job, command, cancel_event, on_log):
+                on_log("sparse output <Scene>")
+                self.assertTrue(visible.wait(2), "sparse log was held until render completion")
+                with open(paths[0], encoding="utf-8") as handle:
+                    self.assertIn("sparse output <Scene>", handle.read())
+                return JobResult(job=job, return_code=0, outcome=JobOutcome.SUCCESS)
+
+        with tempfile.TemporaryDirectory() as out:
+            worker = RenderWorker([RenderJob("a.py", "A")], "-ql", "", out, runner=SparseRunner())
+            paths = []
+            worker.log_file_ready.connect(paths.append)
+            worker.log.connect(
+                lambda text: visible.set() if "sparse output" in text else None,
+                type=Qt.DirectConnection,
+            )
+            results = []
+            worker.job_result.connect(lambda job, outcome, code: results.append(outcome))
+            worker.run()
+            self.assertEqual(results, [JobOutcome.SUCCESS])
+
+    def test_log_io_failures_are_visible_without_failing_render(self):
+        for operation in ("open", "write", "close"):
+            with self.subTest(operation=operation):
+                worker = _worker([RenderJob("a.py", "A")], FakeRunner())
+                handle = mock.Mock(name="log handle")
+                handle.name = "/tmp/injected-render.log"
+                if operation != "open":
+                    getattr(handle, operation).side_effect = OSError("private detail")
+                warnings, results, logs = [], [], []
+                worker.logging_failed.connect(warnings.append)
+                worker.job_result.connect(lambda job, outcome, code: results.append(outcome))
+                worker.log.connect(logs.append)
+                with mock.patch.object(
+                    worker, "_open_log_file", return_value=None if operation == "open" else handle
+                ):
+                    worker.run()
+                self.assertEqual(results, [JobOutcome.SUCCESS])
+                self.assertEqual(len(warnings), 1)
+                self.assertIn(operation, warnings[0])
+                self.assertIn(warnings[0], "\n".join(logs))
+                self.assertNotIn("private detail", "\n".join(logs))
+
     def test_job_result_diagnostic_is_logged(self):
         class DiagnosticRunner:
             def run_job(self, job, command, cancel_event, on_log):

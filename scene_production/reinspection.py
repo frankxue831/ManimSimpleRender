@@ -7,9 +7,12 @@ from pathlib import Path
 import shutil
 import tempfile
 
+from app.render.diagnostics import DiagnosticTimeline
+
 from . import (
     _failure,
     _inspect_video,
+    _production_phase,
     _verify_file,
     _write_receipt,
     load_timeline,
@@ -91,43 +94,51 @@ def reinspect(from_run, timeline, output_dir, tool_timeout=30):
         "video": str(run / "video.mp4"),
         "video_sha256": old["video_sha256"],
     }
-    stage = "copy"
-    try:
-        _write_receipt(run, receipt)
-        shutil.copyfile(source, run / "source.py")
-        shutil.copyfile(old_video, receipt["video"])
-        (run / "timeline.json").write_bytes(raw)
-        if "frame_trace" in old:
-            entry = old["frame_trace"]
-            trace_copy = run / "frame-trace.json"
-            shutil.copyfile(entry["path"], trace_copy)
-            _verify_file(entry["path"], origin.parent, entry["sha256"])
-            _verify_file(str(trace_copy), run, entry["sha256"])
-            receipt["frame_trace"] = {"path": str(trace_copy), "sha256": entry["sha256"]}
-        for value, expected in (
-            (str(origin), origin_sha),
-            (str(origin.parent / "source.py"), old["source_sha256"]),
-            (str(origin.parent / "timeline.json"), old["timeline_sha256"]),
-            (old["video"], old["video_sha256"]),
-        ):
-            _verify_file(value, origin.parent, expected)
-        for name, expected in (
-            ("source.py", receipt["source_sha256"]),
-            ("timeline.json", receipt["timeline_sha256"]),
-            ("video.mp4", receipt["video_sha256"]),
-        ):
-            _verify_file(str(run / name), run, expected)
-        receipt.update(_inspect_video(Path(receipt["video"]), data, run, tool_timeout, receipt))
-        receipt.update(
-            status="success",
-            provenance="Historical retained source/video copied and hash-checked. "
-            "Source changes not applied; helpers/imports/environment not snapshotted. "
-            "Integrity is not authentication or a sandbox.",
-        )
-        receipt.pop("stage", None)
-        stage = "publication"
-        _write_receipt(run, receipt)
-    except BaseException as exc:
-        _failure(run, receipt, stage, exc)
-        raise
+    with DiagnosticTimeline(
+        run / "diagnostics.jsonl", context={"operation": "reinspect", "run_id": run.name}
+    ) as diagnostics:
+        diagnostics.event("production_started")
+        try:
+            with _production_phase(receipt, diagnostics, "copy"):
+                _write_receipt(run, receipt)
+                shutil.copyfile(source, run / "source.py")
+                shutil.copyfile(old_video, receipt["video"])
+                (run / "timeline.json").write_bytes(raw)
+                if "frame_trace" in old:
+                    entry = old["frame_trace"]
+                    trace_copy = run / "frame-trace.json"
+                    shutil.copyfile(entry["path"], trace_copy)
+                    _verify_file(entry["path"], origin.parent, entry["sha256"])
+                    _verify_file(str(trace_copy), run, entry["sha256"])
+                    receipt["frame_trace"] = {"path": str(trace_copy), "sha256": entry["sha256"]}
+                for value, expected in (
+                    (str(origin), origin_sha),
+                    (str(origin.parent / "source.py"), old["source_sha256"]),
+                    (str(origin.parent / "timeline.json"), old["timeline_sha256"]),
+                    (old["video"], old["video_sha256"]),
+                ):
+                    _verify_file(value, origin.parent, expected)
+                for name, expected in (
+                    ("source.py", receipt["source_sha256"]),
+                    ("timeline.json", receipt["timeline_sha256"]),
+                    ("video.mp4", receipt["video_sha256"]),
+                ):
+                    _verify_file(str(run / name), run, expected)
+            inspection = _inspect_video(
+                Path(receipt["video"]), data, run, tool_timeout, receipt, diagnostics
+            )
+            with _production_phase(receipt, diagnostics, "publication"):
+                receipt.update(inspection)
+                receipt.update(
+                    status="success",
+                    provenance="Historical retained source/video copied and hash-checked. "
+                    "Source changes not applied; helpers/imports/environment not snapshotted. "
+                    "Integrity is not authentication or a sandbox.",
+                )
+                receipt.pop("stage", None)
+                _write_receipt(run, receipt)
+        except BaseException as exc:
+            _failure(run, receipt, diagnostics.last_phase or "copy", exc, diagnostics)
+            raise
+        diagnostics.event("production_finished")
     return receipt
