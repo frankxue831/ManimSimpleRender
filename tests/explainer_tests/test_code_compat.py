@@ -1,4 +1,4 @@
-"""Tests for explainer.codegen.code_compat -- the manim 0.20.1 Code API wrapper.
+"""Tests for explainer.codegen.code_compat -- the manim 0.22.1 Code API wrapper.
 
 Imports manim (heavy), so this is a focused integration check of the
 version-fragile accessor, not a pure unit test.

@@ -141,7 +141,7 @@ per-scene results.
 ### Requirements
 
 - **Python 3.12 or 3.13** (both install numpy 2.x)
-- **Manim 0.20.1** and its **system prerequisites**, which `pip` does *not* install:
+- **Manim 0.22.1** and its **system prerequisites**, which `pip` does *not* install:
   **ffmpeg**, a **LaTeX** distribution, and **cairo/pango** (see the apt/brew lines in the
   [Quick start](#quick-start)).
 

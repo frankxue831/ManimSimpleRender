@@ -66,8 +66,8 @@ jobs:
 
   # The README quick start, as written, on a clean runner: the light `.[verify]`
   # install (PyYAML only -- must not need cairo headers), `explainer verify`, then
-  # the documented apt prerequisites + the full `.[explainer]` install (no render:
-  # that needs network TTS and is covered nightly).
+  # the documented apt prerequisites + the full `.[explainer]` install and small
+  # real compatibility renders. Voiceover uses local audio, without network TTS.
   readme-quickstart:
     runs-on: ubuntu-latest
     strategy:
@@ -101,10 +101,10 @@ jobs:
           python -c "import manim, manim_voiceover; print('manim', manim.__version__)"
           explainer verify examples/evidence-budget.story.yaml
 
-      - name: Traced render failure exits without encoder thread hang
+      - name: Real-Manim compatibility (code, video, voiceover, frame tracing)
         run: |
           source .venv/bin/activate
-          python -m unittest tests.test_frame_capture_process
+          python -m unittest tests.explainer_tests.test_code_compat tests.e2e.test_real_render_smoke tests.test_frame_capture_process
 
   test-windows-render-supervision:
     runs-on: windows-latest

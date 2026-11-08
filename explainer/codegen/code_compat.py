@@ -1,17 +1,17 @@
-"""Thin wrapper over the manim 0.20.1 ``Code`` API (isolates the version-fragile bits).
+"""Thin wrapper over the manim 0.22.1 ``Code`` API (isolates the version-fragile bits).
 
-The ``Code`` constructor was rewritten in manim 0.19; 0.20.1 uses ``code_string=``,
+The ``Code`` constructor was rewritten in manim 0.19; 0.22.1 uses ``code_string=``,
 ``formatter_style=``, ``add_line_numbers=``, and exposes per-line mobjects as
 ``code.code_lines[i]`` (a ``Paragraph`` of ``VGroup`` lines). Keeping that here
 means a future manim bump touches ONE file, and the generated scene + codegen
-never reference the raw Code internals directly. Verified by spike on 0.20.1.
+never reference the raw Code internals directly. Covered by the real-Manim integration check.
 """
 
 from manim import Code
 
 
 def build_code(code_string, language="text", formatter_style="monokai", add_line_numbers=False):
-    """Construct a 0.20.1 ``Code`` mobject with a window background."""
+    """Construct a 0.22.1 ``Code`` mobject with a window background."""
     return Code(
         code_string=code_string,
         language=language,
