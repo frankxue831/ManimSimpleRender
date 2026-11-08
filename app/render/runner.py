@@ -43,6 +43,9 @@ class JobResult:
     return_code: object  # int, or None when the binary was not found
     outcome: JobOutcome
     diagnostic: str = ""
+    # Monotonic observation before post-exit supervision, when available.
+    # This is diagnostic metadata, never proof of process-tree cleanup.
+    leader_exit_observed_at: object = None
 
 
 class RenderRunner:
@@ -75,7 +78,13 @@ class RenderRunner:
         try:
             return_code, cancelled, diagnostic = session.finish(cancel_event, on_log)
         except Exception as exc:
-            return JobResult(job, None, JobOutcome.FAILED, f"process supervision failed: {exc}")
+            return JobResult(
+                job,
+                None,
+                JobOutcome.FAILED,
+                f"process supervision failed: {exc}",
+                session.leader_exit_observed_at,
+            )
 
         if diagnostic:
             outcome = JobOutcome.FAILED
@@ -85,4 +94,4 @@ class RenderRunner:
             outcome = JobOutcome.SUCCESS
         else:
             outcome = JobOutcome.FAILED
-        return JobResult(job, return_code, outcome, diagnostic)
+        return JobResult(job, return_code, outcome, diagnostic, session.leader_exit_observed_at)

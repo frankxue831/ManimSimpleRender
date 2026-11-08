@@ -364,6 +364,7 @@ class _ProcessSession:
     terminate_timeout: float
     drain_timeout: float
     windows_job: object = None
+    leader_exit_observed_at: object = None
 
     @classmethod
     def start(cls, command, *, env, terminate_timeout, drain_timeout):
@@ -424,7 +425,12 @@ class _ProcessSession:
     def _finish(self, cancel_event, on_log):
         cancelled = False
         eof = False
-        while self.process.poll() is None:
+        while True:
+            if self.process.poll() is not None:
+                # Observation time, not the OS exit time or proof that the
+                # descendant tree and output reader have finished cleanup.
+                self.leader_exit_observed_at = time.monotonic()
+                break
             if cancel_event is not None and cancel_event.is_set():
                 cancelled = True
                 break

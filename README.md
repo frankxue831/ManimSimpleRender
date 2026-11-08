@@ -204,6 +204,9 @@ resolve inside the bundle automatically. It is intentionally not produced by CI.
 
 ## Development
 
+For log locations, failure diagnosis and separating preparation, render, checking
+and handoff time, see [Logging and diagnostics](docs/logging-and-diagnostics.md).
+
 ```bash
 pip install -r requirements-dev.txt          # adds black + flake8
 QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests   # run the test suite headless

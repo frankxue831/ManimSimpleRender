@@ -1,6 +1,7 @@
 """Bounded production of trusted Manim scenes; not a sandbox."""
 
 import ast
+from contextlib import contextmanager, nullcontext
 import hashlib
 import io
 import json
@@ -13,14 +14,32 @@ import sys
 import subprocess
 import tempfile
 import threading
+import time
 import tokenize
 
 from app.render.aggregation import JobOutcome
 from app.render.command_builder import build_command
+from app.render.diagnostics import DiagnosticTimeline, exception_type
+from app.render.implementation import write_implementation_manifest
 from app.render.jobs import RenderJob
 from app.render.quality import known_quality_flags
 from app.render.runner import RenderRunner
 from app.scenes.discovery import _discover_from_tree
+
+
+class _ProductionInterrupted(BaseException):
+    """Marker shared with the signal adapter without importing the agent."""
+
+
+def _record_implementation(run, operation, diagnostics):
+    if not write_implementation_manifest(
+        run / "implementation.json", operation=operation, run_id=run.name
+    ):
+        diagnostics.event("implementation_manifest_unavailable")
+        try:
+            print("Warning: implementation manifest unavailable.", file=sys.stderr)
+        except (OSError, ValueError):
+            pass
 
 
 def _font_failure_hint(log_path):
@@ -191,11 +210,35 @@ def _write_receipt(run, receipt):
     temporary.replace(run / "result.json")
 
 
-def _failure(run, receipt, stage, exc):
-    receipt.update(status="failed", stage=receipt.get("stage", stage), error=str(exc))
+def _failure(run, receipt, stage, exc, diagnostics=None):
+    receipt.update(
+        status="failed",
+        stage=receipt.get("stage", stage),
+        error=str(exc),
+        exception_type=exception_type(exc),
+    )
+    if isinstance(exc, (_ProductionInterrupted, KeyboardInterrupt, SystemExit)):
+        receipt["failure_reason"] = "interrupted"
+        receipt["process_cleanup_verified"] = False
+    else:
+        receipt.setdefault(
+            "failure_reason",
+            "tool_timeout" if isinstance(exc, subprocess.TimeoutExpired) else "exception",
+        )
+    if diagnostics is not None:
+        diagnostics.event(
+            "production_failed",
+            phase=receipt["stage"],
+            exception_type=exception_type(exc),
+            reason=receipt["failure_reason"],
+        )
     try:
         _write_receipt(run, receipt)
     except BaseException as persistence:
+        if diagnostics is not None:
+            diagnostics.event(
+                "failure_receipt_unavailable", exception_type=exception_type(persistence)
+            )
         raise persistence from exc
     exc.receipt_path = str(run / "result.json")
 
@@ -208,153 +251,163 @@ def _preview_frame_index(sample, trace):
     return min(index, trace["frame_count"] - 1)
 
 
-def _inspect_video(video, data, run, tool_timeout, receipt):
+@contextmanager
+def _production_phase(receipt, diagnostics, name):
+    """Keep the legacy failure stage and the diagnostic timeline in agreement."""
+    receipt["stage"] = name
+    with diagnostics.phase(name) if diagnostics is not None else nullcontext():
+        yield
+
+
+def _inspect_video(video, data, run, tool_timeout, receipt, diagnostics=None):
     """One complete checker for render/reinspection, using sequential frame extraction."""
-    receipt["stage"] = "inspection_integrity"
-    _verify_file(str(video), run, receipt["video_sha256"])
-    receipt["stage"] = "probe"
-    probe = json.loads(
-        tool(
-            [
-                "ffprobe",
-                "-v",
-                "error",
-                "-show_streams",
-                "-show_format",
-                "-of",
-                "json",
-                str(video),
-            ],
-            tool_timeout,
+    with _production_phase(receipt, diagnostics, "inspection_integrity"):
+        _verify_file(str(video), run, receipt["video_sha256"])
+    with _production_phase(receipt, diagnostics, "probe"):
+        probe = json.loads(
+            tool(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_streams",
+                    "-show_format",
+                    "-of",
+                    "json",
+                    str(video),
+                ],
+                tool_timeout,
+            )
         )
-    )
-    stream = next(s for s in probe["streams"] if s["codec_type"] == "video")
+        stream = next(s for s in probe["streams"] if s["codec_type"] == "video")
     trace = None
     if "frame_trace" in receipt:
         from .frame_trace import read_trace
 
-        receipt["stage"] = "frame_trace"
-        entry = receipt["frame_trace"]
-        _verify_file(entry["path"], run, entry["sha256"])
-        trace = read_trace(entry["path"], receipt["source_sha256"], stream)
-        receipt["stage"] = "probe"
-    duration, duration_method = video_duration(stream, video, tool_timeout)
-    numerator, denominator = map(int, stream["avg_frame_rate"].split("/"))
-    fps = numerator / denominator
-    if not math.isfinite(fps) or fps <= 0 or duration <= 0:
-        raise ValueError("invalid video metadata")
-    tolerance = 2 / fps + 0.05
-    if abs(data["segments"][-1]["end"] - duration) > tolerance:
-        raise ValueError("timeline duration disagrees with video")
-    receipt["stage"] = "decode"
-    tool(
-        [
-            "ffmpeg",
-            "-nostdin",
-            "-v",
-            "error",
-            "-xerror",
-            "-i",
-            str(video),
-            "-map",
-            "0:v:0",
-            "-f",
-            "null",
-            "-",
-        ],
-        tool_timeout,
-    )
-    receipt["stage"] = "frames"
-    frames = []
-    plan = []
-    (run / "frames").mkdir()
-    for index, segment in enumerate(data["segments"]):
-        start, end = segment["start"], min(segment["end"], duration)
-        if end <= start:
-            raise ValueError("segment outside video")
-        times = sorted(
-            set(
-                [start + (end - start) * 0.1, start + (end - start) * 0.9]
-                + segment.get("samples", [])
-            )
+        with _production_phase(receipt, diagnostics, "frame_trace"):
+            entry = receipt["frame_trace"]
+            _verify_file(entry["path"], run, entry["sha256"])
+            trace = read_trace(entry["path"], receipt["source_sha256"], stream)
+    with _production_phase(receipt, diagnostics, "probe"):
+        duration, duration_method = video_duration(stream, video, tool_timeout)
+        numerator, denominator = map(int, stream["avg_frame_rate"].split("/"))
+        fps = numerator / denominator
+        if not math.isfinite(fps) or fps <= 0 or duration <= 0:
+            raise ValueError("invalid video metadata")
+        tolerance = 2 / fps + 0.05
+        if abs(data["segments"][-1]["end"] - duration) > tolerance:
+            raise ValueError("timeline duration disagrees with video")
+    with _production_phase(receipt, diagnostics, "decode"):
+        tool(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-xerror",
+                "-i",
+                str(video),
+                "-map",
+                "0:v:0",
+                "-f",
+                "null",
+                "-",
+            ],
+            tool_timeout,
         )
-        for sample in times:
-            if not start < sample < end:
-                raise ValueError("sample outside actual video")
-            frame = run / "frames" / ("%03d.png" % len(plan))
-            plan.append((index, sample, frame))
-    for index, sample, frame in plan:
-        if trace is not None:
-            from fractions import Fraction
-
-            native_rate = Fraction(trace["frame_rate"])
-            native_index = _preview_frame_index(sample, trace)
-            # Index selection avoids ambiguous timestamp seeking at a boundary
-            # and remains valid for short final sections with no later PTS.
-            command = [
-                "ffmpeg",
-                "-nostdin",
-                "-v",
-                "error",
-                "-xerror",
-                "-i",
-                str(video),
-                "-map",
-                "0:v:0",
-                "-vf",
-                f"select=eq(n\\,{native_index})",
-                "-frames:v",
-                "1",
-                "-n",
-                frame.name,
-            ]
-        else:
-            command = [
-                "ffmpeg",
-                "-nostdin",
-                "-v",
-                "error",
-                "-xerror",
-                "-ss",
-                str(sample),
-                "-i",
-                str(video),
-                "-map",
-                "0:v:0",
-                "-frames:v",
-                "1",
-                "-n",
-                frame.name,
-            ]
-        # image2 interprets percent sequences even in directory components.
-        # Keep user-selected directories out of its output pattern. The frames
-        # directory is new for this run; -n alone is not a path-safety boundary.
-        tool(command, tool_timeout, cwd=frame.parent)
-        header = frame.read_bytes()[:24]
-        if (
-            len(header) != 24
-            or header[:8] != b"\x89PNG\r\n\x1a\n"
-            or struct.unpack(">II", header[16:24]) != (stream["width"], stream["height"])
-        ):
-            raise RuntimeError("invalid PNG or changed resolution")
-        item = {"path": str(frame), "time": sample, "segment": index, "sha256": digest(frame)}
-        if trace is not None:
-            item.update(
-                native_frame_index=native_index,
-                native_time=str(Fraction(native_index, native_rate)),
-                time_notice="time is requested seconds; native_frame_index is extracted exactly",
+    with _production_phase(receipt, diagnostics, "frames"):
+        frames = []
+        plan = []
+        (run / "frames").mkdir()
+        for index, segment in enumerate(data["segments"]):
+            start, end = segment["start"], min(segment["end"], duration)
+            if end <= start:
+                raise ValueError("segment outside video")
+            times = sorted(
+                set(
+                    [start + (end - start) * 0.1, start + (end - start) * 0.9]
+                    + segment.get("samples", [])
+                )
             )
-        frames.append(item)
-    receipt["stage"] = "inspection_integrity"
-    for path, expected in (
-        (video, receipt["video_sha256"]),
-        (run / "source.py", receipt["source_sha256"]),
-        (run / "timeline.json", receipt["timeline_sha256"]),
-    ):
-        _verify_file(str(path), run, expected)
-    if "frame_trace" in receipt:
-        entry = receipt["frame_trace"]
-        _verify_file(entry["path"], run, entry["sha256"])
+            for sample in times:
+                if not start < sample < end:
+                    raise ValueError("sample outside actual video")
+                frame = run / "frames" / ("%03d.png" % len(plan))
+                plan.append((index, sample, frame))
+        for index, sample, frame in plan:
+            if trace is not None:
+                from fractions import Fraction
+
+                native_rate = Fraction(trace["frame_rate"])
+                native_index = _preview_frame_index(sample, trace)
+                # Index selection avoids ambiguous timestamp seeking at a boundary
+                # and remains valid for short final sections with no later PTS.
+                command = [
+                    "ffmpeg",
+                    "-nostdin",
+                    "-v",
+                    "error",
+                    "-xerror",
+                    "-i",
+                    str(video),
+                    "-map",
+                    "0:v:0",
+                    "-vf",
+                    f"select=eq(n\\,{native_index})",
+                    "-frames:v",
+                    "1",
+                    "-n",
+                    frame.name,
+                ]
+            else:
+                command = [
+                    "ffmpeg",
+                    "-nostdin",
+                    "-v",
+                    "error",
+                    "-xerror",
+                    "-ss",
+                    str(sample),
+                    "-i",
+                    str(video),
+                    "-map",
+                    "0:v:0",
+                    "-frames:v",
+                    "1",
+                    "-n",
+                    frame.name,
+                ]
+            # image2 interprets percent sequences even in directory components.
+            # Keep user-selected directories out of its output pattern. The frames
+            # directory is new for this run; -n alone is not a path-safety boundary.
+            tool(command, tool_timeout, cwd=frame.parent)
+            header = frame.read_bytes()[:24]
+            if (
+                len(header) != 24
+                or header[:8] != b"\x89PNG\r\n\x1a\n"
+                or struct.unpack(">II", header[16:24]) != (stream["width"], stream["height"])
+            ):
+                raise RuntimeError("invalid PNG or changed resolution")
+            item = {"path": str(frame), "time": sample, "segment": index, "sha256": digest(frame)}
+            if trace is not None:
+                item.update(
+                    native_frame_index=native_index,
+                    native_time=str(Fraction(native_index, native_rate)),
+                    time_notice=(
+                        "time is requested seconds; native_frame_index is extracted exactly"
+                    ),
+                )
+            frames.append(item)
+    with _production_phase(receipt, diagnostics, "inspection_integrity"):
+        for path, expected in (
+            (video, receipt["video_sha256"]),
+            (run / "source.py", receipt["source_sha256"]),
+            (run / "timeline.json", receipt["timeline_sha256"]),
+        ):
+            _verify_file(str(path), run, expected)
+        if "frame_trace" in receipt:
+            entry = receipt["frame_trace"]
+            _verify_file(entry["path"], run, entry["sha256"])
     return dict(
         probe=probe,
         frames=frames,
@@ -402,103 +455,174 @@ def render(
     root = Path(output_dir).resolve()
     root.mkdir(parents=True, exist_ok=True)
     run = Path(tempfile.mkdtemp(prefix="scene-", dir=root))
-    stage = "prepare"
     receipt = {"status": "failed", "run_dir": str(run)}
-    try:
-        (run / "source.py").write_bytes(raw_source)
-        (run / "timeline.json").write_bytes(raw)
-        event = cancel_event if cancel_event is not None else threading.Event()
-        timer = threading.Timer(timeout, event.set)
-        timer.daemon = True
-        job = RenderJob(str(source), scene)
-        command = build_command(job, flag, str(run / "media"))
-        command += ["--disable_caching"]
-        if record_scene_frames:
-            if command[:3] != [sys.executable, "-m", "manim"]:
-                raise ValueError("frame tracing requires the normal Python Manim environment")
-            command = [
-                sys.executable,
-                "-I",
-                str(Path(__file__).with_name("launcher.py")),
-                "capture",
-                *command[3:],
-            ]
-        env = os.environ.copy()
-        env["PYTHONDONTWRITEBYTECODE"] = "1"
-        if record_scene_frames:
-            env["SCENE_PRODUCTION_FRAME_TRACE"] = str(run / "frame-trace.json")
-        else:
-            env.pop("SCENE_PRODUCTION_FRAME_TRACE", None)
-        env["PYTHONPATH"] = str(source.parent) + os.pathsep + env.get("PYTHONPATH", "")
-        stage = "render"
-        with (run / "render.log").open("w") as log:
-            timer.start()
-            try:
-                outcome = (runner or RenderRunner(terminate_timeout=1)).run_job(
-                    job, command, event, lambda line: log.write(str(line) + "\n"), env
+    with DiagnosticTimeline(
+        run / "diagnostics.jsonl", context={"operation": "render", "run_id": run.name}
+    ) as diagnostics:
+        diagnostics.event("production_started")
+        try:
+            _record_implementation(run, "render", diagnostics)
+            with _production_phase(receipt, diagnostics, "prepare"):
+                (run / "source.py").write_bytes(raw_source)
+                (run / "timeline.json").write_bytes(raw)
+                event = cancel_event if cancel_event is not None else threading.Event()
+                deadline_fired_at = None
+                completed_at = None
+                completion_lock = threading.Lock()
+
+                def deadline():
+                    nonlocal deadline_fired_at
+                    # Serialize the deadline with observed API completion. A
+                    # delayed timer cannot turn a returned result into timeout.
+                    with completion_lock:
+                        if completed_at is None and not event.is_set():
+                            deadline_fired_at = time.monotonic()
+                            event.set()
+
+                timer = threading.Timer(timeout, deadline)
+                timer.daemon = True
+                job = RenderJob(str(source), scene)
+                command = build_command(job, flag, str(run / "media"))
+                command += ["--disable_caching"]
+                if record_scene_frames:
+                    if command[:3] != [sys.executable, "-m", "manim"]:
+                        raise ValueError(
+                            "frame tracing requires the normal Python Manim environment"
+                        )
+                    command = [
+                        sys.executable,
+                        "-I",
+                        str(Path(__file__).with_name("launcher.py")),
+                        "capture",
+                        *command[3:],
+                    ]
+                env = os.environ.copy()
+                env["PYTHONDONTWRITEBYTECODE"] = "1"
+                if record_scene_frames:
+                    env["SCENE_PRODUCTION_FRAME_TRACE"] = str(run / "frame-trace.json")
+                else:
+                    env.pop("SCENE_PRODUCTION_FRAME_TRACE", None)
+                env["PYTHONPATH"] = str(source.parent) + os.pathsep + env.get("PYTHONPATH", "")
+            with _production_phase(receipt, diagnostics, "render"):
+                # The run is exclusive. Restrict raw child output and flush each
+                # line so a silent/hung render's last output remains inspectable.
+                descriptor = os.open(
+                    run / "render.log", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
                 )
-            finally:
-                timer.cancel()
-                timer.join()
-        if event.is_set():
-            raise RuntimeError("render timed out or cancelled")
-        if outcome.outcome != JobOutcome.SUCCESS or outcome.return_code != 0:
-            message = "render failed: " + str(outcome)
-            hint = _font_failure_hint(run / "render.log")
-            if hint:
-                message += "\nfont hint (from render log): " + hint
-            raise RuntimeError(message)
-        stage = "provenance"
-        if source.read_bytes() != raw_source:
-            raise RuntimeError("source changed during render")
-        stage = "artifact"
-        videos = [
-            p
-            for p in (run / "media").rglob(scene + ".mp4")
-            if "partial_movie_files" not in p.relative_to(run / "media").parts
-            and p.is_file()
-            and p.stat().st_size > 0
-        ]
-        if len(videos) != 1:
-            raise RuntimeError("expected exactly one final nonempty video")
-        video = videos[0]
-        source_sha = hashlib.sha256(raw_source).hexdigest()
-        timeline_sha = hashlib.sha256(raw).hexdigest()
-        video_sha = digest(video)
-        for path, expected in (
-            (video, video_sha),
-            (run / "source.py", source_sha),
-            (run / "timeline.json", timeline_sha),
-        ):
-            _verify_file(str(path), run, expected)
-        if event.is_set() or source.read_bytes() != raw_source:
-            raise RuntimeError("render cancelled or source changed before recording artifact")
-        receipt.update(
-            completed_artifact_version=1,
-            video=str(video),
-            video_sha256=video_sha,
-            source=str(source),
-            source_sha256=source_sha,
-            timeline_sha256=timeline_sha,
-            command=command,
-        )
-        if record_scene_frames:
-            trace_path = run / "frame-trace.json"
-            receipt["frame_trace"] = {"path": str(trace_path), "sha256": digest(trace_path)}
-        _write_receipt(run, receipt)
-        inspection = _inspect_video(video, data, run, tool_timeout, receipt)
-        receipt.update(
-            status="success",
-            provenance=(
-                "Source checked before/after render; transient changes cannot be excluded. "
-                "Helpers, imports and environment not snapshotted. Trusted code, not sandboxed."
-            ),
-        )
-        receipt.update(inspection)
-        receipt.pop("stage", None)
-        stage = "publication"
-        _write_receipt(run, receipt)
-    except BaseException as exc:
-        _failure(run, receipt, stage, exc)
-        raise
+                with os.fdopen(descriptor, "w", encoding="utf-8", buffering=1) as log:
+                    timer.start()
+                    try:
+                        outcome = (runner or RenderRunner(terminate_timeout=1)).run_job(
+                            job, command, event, lambda line: log.write(str(line) + "\n"), env
+                        )
+                        with completion_lock:
+                            completed_at = time.monotonic()
+                            cancelled_at_completion = event.is_set()
+                    finally:
+                        timer.cancel()
+                        timer.join()
+                    if outcome.diagnostic:
+                        log.write(outcome.diagnostic + "\n")
+                timed_out = deadline_fired_at is not None and deadline_fired_at <= completed_at
+                observed_exit = getattr(outcome, "leader_exit_observed_at", None)
+                exit_before_deadline = None
+                if (
+                    type(observed_exit) in (int, float)
+                    and math.isfinite(observed_exit)
+                    and deadline_fired_at is not None
+                ):
+                    exit_before_deadline = observed_exit < deadline_fired_at
+                diagnostics.event(
+                    "render_result",
+                    outcome=outcome.outcome.value,
+                    return_code=outcome.return_code,
+                    leader_exit_observed_before_deadline=exit_before_deadline,
+                )
+                if timed_out or (cancelled_at_completion and deadline_fired_at is None):
+                    if timed_out:
+                        # The budget includes output draining and process-tree
+                        # cleanup. A leader exit alone cannot certify success.
+                        receipt["failure_reason"] = (
+                            "render_cleanup_timeout" if exit_before_deadline else "render_timeout"
+                        )
+                        raise RuntimeError(
+                            "render cleanup timed out"
+                            if exit_before_deadline
+                            else "render timed out"
+                        )
+                    receipt["failure_reason"] = "cancelled"
+                    raise RuntimeError("render cancelled")
+                if outcome.outcome != JobOutcome.SUCCESS or outcome.return_code != 0:
+                    receipt["failure_reason"] = (
+                        "executable_not_found"
+                        if outcome.outcome == JobOutcome.MANIM_NOT_FOUND
+                        else (
+                            "cancelled"
+                            if outcome.outcome == JobOutcome.CANCELLED
+                            else "render_failed"
+                        )
+                    )
+                    message = "render failed: " + str(outcome)
+                    hint = _font_failure_hint(run / "render.log")
+                    if hint:
+                        message += "\nfont hint (from render log): " + hint
+                    raise RuntimeError(message)
+            with _production_phase(receipt, diagnostics, "provenance"):
+                if source.read_bytes() != raw_source:
+                    raise RuntimeError("source changed during render")
+            with _production_phase(receipt, diagnostics, "artifact"):
+                videos = [
+                    p
+                    for p in (run / "media").rglob(scene + ".mp4")
+                    if "partial_movie_files" not in p.relative_to(run / "media").parts
+                    and p.is_file()
+                    and p.stat().st_size > 0
+                ]
+                if len(videos) != 1:
+                    raise RuntimeError("expected exactly one final nonempty video")
+                video = videos[0]
+                source_sha = hashlib.sha256(raw_source).hexdigest()
+                timeline_sha = hashlib.sha256(raw).hexdigest()
+                video_sha = digest(video)
+                for path, expected in (
+                    (video, video_sha),
+                    (run / "source.py", source_sha),
+                    (run / "timeline.json", timeline_sha),
+                ):
+                    _verify_file(str(path), run, expected)
+                if event.is_set():
+                    receipt["failure_reason"] = "cancelled"
+                    raise RuntimeError("render cancelled before recording artifact")
+                if source.read_bytes() != raw_source:
+                    raise RuntimeError("source changed before recording artifact")
+                receipt.update(
+                    completed_artifact_version=1,
+                    video=str(video),
+                    video_sha256=video_sha,
+                    source=str(source),
+                    source_sha256=source_sha,
+                    timeline_sha256=timeline_sha,
+                    command=command,
+                )
+                if record_scene_frames:
+                    trace_path = run / "frame-trace.json"
+                    receipt["frame_trace"] = {"path": str(trace_path), "sha256": digest(trace_path)}
+                _write_receipt(run, receipt)
+            inspection = _inspect_video(video, data, run, tool_timeout, receipt, diagnostics)
+            with _production_phase(receipt, diagnostics, "publication"):
+                receipt.update(
+                    status="success",
+                    provenance=(
+                        "Source checked before/after render; transient changes cannot be excluded. "
+                        "Helpers, imports and environment not snapshotted. "
+                        "Trusted code, not sandboxed."
+                    ),
+                )
+                receipt.update(inspection)
+                receipt.pop("stage", None)
+                _write_receipt(run, receipt)
+        except BaseException as exc:
+            _failure(run, receipt, diagnostics.last_phase or "prepare", exc, diagnostics)
+            raise
+        diagnostics.event("production_finished")
     return receipt

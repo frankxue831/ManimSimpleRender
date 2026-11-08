@@ -16,8 +16,12 @@ import stat
 import sys
 import tempfile
 import threading
+import time
+import traceback
 
-from . import _font_failure_hint, digest, pairs
+from app.render.diagnostics import DiagnosticTimeline, utc_timestamp
+
+from . import _ProductionInterrupted, _font_failure_hint, digest, pairs
 
 VERSION = 1
 STAGES = {
@@ -39,7 +43,7 @@ class _UsageError(Exception):
     pass
 
 
-class _Interrupted(BaseException):
+class _Interrupted(_ProductionInterrupted):
     def __init__(self, signum):
         self.signum = signum
 
@@ -116,6 +120,9 @@ def describe_protocol():
         "inspect_options": {"tool_timeout": 30},
         "output_policy": "New exclusive directory; parent must exist. Never reuse an attempt.",
         "events": ["started", "terminal"],
+        "timing": "Events include observed UTC timestamp and process-local monotonic "
+        "elapsed_seconds. Private diagnostics.jsonl records phases; it is not a "
+        "completion, liveness or retry protocol.",
         "terminal_statuses": ["succeeded", "failed", "unknown"],
         "exit_codes": {
             "0": "succeeded",
@@ -284,6 +291,7 @@ def _diagnostics(attempt, exc=None):
             ("attempt_state", "attempt.json"),
             ("events", "events.jsonl"),
             ("api_log", "api.log"),
+            ("timeline", "diagnostics.jsonl"),
         )
     }
     # Never accept a foreign path from an exception or associate old output logs.
@@ -297,6 +305,17 @@ def _diagnostics(attempt, exc=None):
         receipt = _read_json(path)
         if receipt.get("stage") in STAGES:
             result["stage"] = receipt["stage"]
+        if receipt.get("failure_reason") in {
+            "render_timeout",
+            "render_cleanup_timeout",
+            "interrupted",
+            "cancelled",
+            "tool_timeout",
+            "render_failed",
+            "executable_not_found",
+            "exception",
+        }:
+            result["failure_reason"] = receipt["failure_reason"]
         log = run / "render.log"
         _regular(str(log), run)
         result["render_log"] = str(log)
@@ -324,6 +343,8 @@ def _call_api(args, attempt):
 def main(argv=None):
     """One CLI invocation, not a thread-safe in-process service or retry engine."""
     token = secrets.token_hex(16)
+    began = time.monotonic()
+    timeline = None
     stream, attempt, operation, events = sys.stdout, None, None, []
     code, status, phase, payload = 1, "failed", "arguments", {}
 
@@ -334,6 +355,9 @@ def main(argv=None):
             run_token=token,
             operation=operation,
             retry_safe=False,
+            timestamp=utc_timestamp(),
+            elapsed_seconds=round(max(0, time.monotonic() - began), 6),
+            phase=phase,
             **fields,
         )
 
@@ -359,23 +383,43 @@ def main(argv=None):
             target = requested.parent.resolve(strict=True) / requested.name
             target.mkdir(mode=0o700, exist_ok=False)
             attempt = target
+            timeline = DiagnosticTimeline(
+                attempt / "diagnostics.jsonl",
+                context={"run_token": token, "operation": operation},
+                warn=False,
+            )
             phase = "persistence"
             started = event("started", status="running", attempt_dir=str(attempt))
-            persist(started)
+            with timeline.phase("initial_persistence"):
+                persist(started)
             events.append(started)
-            emit(started)
+            phase = "transport"
+            with timeline.phase("started_delivery"):
+                emit(started)
             phase = "operation"
             with _interrupts(), _private_output(attempt / "api.log"):
-                result = _call_api(args, attempt)
-                phase = "verification"
-                artifacts = _verified_result(result, attempt, operation)
+                try:
+                    with timeline.phase("operation"):
+                        result = _call_api(args, attempt)
+                    phase = "verification"
+                    with timeline.phase("verification"):
+                        artifacts = _verified_result(result, attempt, operation)
+                    timeline.event("production_run", run_id=Path(result["run_dir"]).name)
+                except BaseException:
+                    # Keep early validation failures and verifier details in the
+                    # private capture, never in the protocol or timing sidecar.
+                    try:
+                        traceback.print_exc()
+                    except Exception:
+                        pass
+                    raise
             payload = {
                 "artifacts": artifacts,
                 "semantic_acceptance": False,
                 "verification_scope": "retained_artifact_bytes",
                 "diagnostics": _diagnostics(attempt),
             }
-        code, status = 0, "succeeded"
+        code, status, phase = 0, "succeeded", "complete"
     except _UsageError:
         code, payload = 2, {"error": {"code": "invalid_arguments", "hint": "Run describe."}}
     except (_Interrupted, KeyboardInterrupt, SystemExit) as exc:
@@ -394,16 +438,27 @@ def main(argv=None):
             error = "verification_failed"
         elif phase == "persistence":
             code, status, error = 3, "unknown", "persistence_failed"
+        elif phase == "transport":
+            code, status, error = 3, "unknown", "transport_failed"
         elif isinstance(exc, FileNotFoundError):
             error = "input_or_tool_missing"
         elif isinstance(exc, ValueError):
             error = "invalid_input"
         payload = {"error": {"code": error}, "diagnostics": _diagnostics(attempt, exc)}
+    # This sidecar covers the API and retained-byte verification, not the final
+    # protocol commit/delivery below. Logging cannot change the API outcome.
+    if timeline is not None:
+        timeline.event("operation_outcome", status=status, exit_code=code, phase=phase)
+        timeline.close()
+        payload.setdefault("diagnostics", _diagnostics(attempt))[
+            "timeline_write_failed"
+        ] = timeline.failed
     terminal = event("terminal", status=status, exit_code=code, **payload)
     try:
         persist(terminal)
     except Exception:
         code = 3
+        phase = "persistence"
         terminal = event(
             "terminal",
             status="unknown",
@@ -420,6 +475,7 @@ def main(argv=None):
         emit(terminal)
     except (OSError, ValueError):
         # A partial/full line may have reached the caller: do not emit another one.
+        phase = "transport"
         unknown = event(
             "terminal",
             status="unknown",

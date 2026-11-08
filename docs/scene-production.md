@@ -42,6 +42,30 @@ Only trusted Python should be rendered: this is not a sandbox. Source bytes are
 compared before and after rendering; transient changes cannot be ruled out.
 Imports, fonts, external assets and the environment are not fully snapshotted.
 
+Each new run also writes private `diagnostics.jsonl` with UTC observation times,
+monotonic elapsed times and phase durations. It distinguishes snapshot/command
+preparation, rendering, provenance/artifact checks, probing, decoding, frame
+extraction and receipt publication. Reinspection records copying and the same
+checks without a render phase. Repeated phase names are separate spans in file
+order. These observations begin after input validation and run-directory creation;
+they do not measure earlier preparation, queue waits, human review or delivery.
+No raw output, environment values, command arguments or exception messages are
+added to this timeline. It is best-effort diagnostic evidence, not a completion
+protocol; an incomplete timeline does not authorize retrying a render.
+
+`render.log` retains raw child output plus runner diagnostics, uses UTF-8 and
+flushes each line. New raw logs and timelines are owner-only files on POSIX;
+existing receipt contents and permissions are unchanged. Raw logs and receipts
+can contain private paths or scene output, so inspect them before sharing. A
+failure receipt adds a fixed `failure_reason` and a safe `exception_type`.
+The reason is one of
+`render_timeout`, `cancelled`, `executable_not_found`, `render_failed`,
+`tool_timeout`, or the fallback `exception`. Render timeout covers the render
+runner call, including its output draining and cleanup. A late timer callback
+after observed runner completion cannot turn success into timeout. Diagnostic
+write failure emits a generic warning and does not alter the render outcome;
+raw render-log failures continue to fail the operation.
+
 ## Reinspect an unchanged recorded video
 
 ```sh

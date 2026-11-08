@@ -10,6 +10,7 @@ Worker and discovery are injectable for headless testing.
 """
 
 import os
+import tempfile
 import threading
 
 from PyQt5.QtCore import QObject, QTimer, QUrl, pyqtSignal
@@ -61,6 +62,9 @@ class RenderController(QObject):
         self._submit = submit or _default_task_submit
         self._settings = settings
         self._worker = None
+        self._render_log_path = None
+        self._render_log_warning = None
+        self._render_diagnostics_warning = None
         self._pending_summary = None
         self._state = "idle"
         self._discovery_seq = 0  # bumped per request; only the latest result is applied
@@ -192,6 +196,9 @@ class RenderController(QObject):
 
         self._save_settings()
         self._view.clear_log()
+        self._render_log_path = None
+        self._render_log_warning = None
+        self._render_diagnostics_warning = None
         self._view.reset_progress()
         self._view.clear_scene_results()
         self._view.set_controls_enabled(False)
@@ -208,7 +215,14 @@ class RenderController(QObject):
             # run() returns) drives both lifecycle completion and deleteLater.
             worker.setParent(self)
             worker.status.connect(self._view.set_status)
-            worker.log.connect(self._view.append_log)
+            worker.log.connect(self._view.append_render_log)
+            # Older injected workers may only implement the original signals.
+            if hasattr(worker, "log_file_ready"):
+                worker.log_file_ready.connect(self._on_log_file_ready)
+            if hasattr(worker, "logging_failed"):
+                worker.logging_failed.connect(self._on_logging_failed)
+            if hasattr(worker, "diagnostics_failed"):
+                worker.diagnostics_failed.connect(self._on_diagnostics_failed)
             worker.progress.connect(self._view.set_progress)
             worker.job_result.connect(self._on_job_result)
             worker.finished_summary.connect(self._on_summary)
@@ -233,13 +247,23 @@ class RenderController(QObject):
 
     def _on_summary(self, summary):
         self._pending_summary = summary
-        # Style terminal failures red; a user-initiated cancel is not an error.
-        level = "error" if (summary.failed or summary.manim_not_found) else ""
-        self._view.set_status(summary.terminal_message(), level=level)
+        self._show_summary(summary)
         # The primary button is intentionally excluded from set_controls_enabled()
         # while it serves as Cancel. Once accounting is final there is nothing left
         # to cancel, but it must not become Start until QThread.finished arrives.
         self._view.set_button_mode("finishing")
+
+    def _show_summary(self, summary):
+        # Style terminal failures red; a user-initiated cancel is not an error.
+        level = "error" if (summary.failed or summary.manim_not_found) else ""
+        message = summary.terminal_message()
+        if self._render_log_warning:
+            message += " Warning: the disk log is incomplete."
+            level = "error"
+        if self._render_diagnostics_warning:
+            message += " Warning: implementation manifest unavailable."
+            level = "error"
+        self._view.set_status(message, level=level)
 
     def _on_thread_finished(self):
         self._shutdown_timer.stop()
@@ -256,8 +280,7 @@ class RenderController(QObject):
         if summary is None:
             self._view.set_status("Render worker stopped without a summary.", level="error")
         else:
-            level = "error" if (summary.failed or summary.manim_not_found) else ""
-            self._view.set_status(summary.terminal_message(), level=level)
+            self._show_summary(summary)
         if self._close_pending:
             self._close_pending = False
             QTimer.singleShot(0, self._view.close)
@@ -558,21 +581,93 @@ class RenderController(QObject):
         self._view.select_only(set(keys))
         self.start_render()
 
+    def _on_log_file_ready(self, path):
+        self._render_log_path = path
+        self._view.append_log(f"Full render log: {path}")
+
+    def _on_logging_failed(self, warning):
+        self._render_log_warning = warning
+
+    def _on_diagnostics_failed(self, warning):
+        self._render_diagnostics_warning = warning
+
     def _on_save_log(self):
-        # Let the user save/attach the render log for a bug report (BL-20).
+        # The UI is a bounded tail. Export the persisted file when available;
+        # an in-flight render is copied only up to its size at export start.
         text = self._view.log_text()
-        if not text.strip():
+        if not self._render_log_path and not text.strip():
             self._view.set_status("Nothing to save yet - the log is empty.")
             return
         path = self._view.prompt_save_log()
         if not path:
             return
+        temporary = None
         try:
-            with open(path, "w", encoding="utf-8") as handle:
-                handle.write(text)
-            self._view.set_status(f"Log saved to {path}.")
+            # The save dialog runs a nested event loop; inspect state after it
+            # returns so a finished render is not labelled as still running.
+            in_progress = self._state in ("running", "cancelling")
+            source = self._render_log_path
+            if source:
+                os.stat(source)  # Do not claim an already-saved file that was removed.
+            if source and (
+                os.path.realpath(source) == os.path.realpath(path)
+                or (os.path.exists(path) and os.path.samefile(source, path))
+            ):
+                message = f"Render log is already at {path}; no copy needed."
+                if self._render_log_warning:
+                    message += " Warning: the disk log is incomplete."
+                if in_progress:
+                    message += " Render is still in progress; this live log is incomplete."
+                self._view.set_status(message, level="error" if self._render_log_warning else "")
+                return
+            # Keep an existing export intact if reading, writing or closing the
+            # snapshot fails. Same-directory replace is atomic, and mkstemp's
+            # private permissions also protect a newly replaced export.
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                prefix=".msr-log-export-",
+                dir=os.path.dirname(os.path.abspath(path)),
+                delete=False,
+            ) as destination:
+                temporary = destination.name
+                if self._render_log_warning:
+                    destination.write(
+                        ("WARNING: " + self._render_log_warning + "\n").encode("utf-8")
+                    )
+                if in_progress:
+                    destination.write(
+                        b"INCOMPLETE: Render is still in progress; "
+                        b"this snapshot ends at export time.\n"
+                    )
+                if source:
+                    with open(source, "rb") as original:
+                        remaining = os.fstat(original.fileno()).st_size
+                        while remaining:
+                            chunk = original.read(min(remaining, 64 * 1024))
+                            if not chunk:
+                                raise OSError("Render log changed during export")
+                            destination.write(chunk)
+                            remaining -= len(chunk)
+                    kind = (
+                        "Partial render log" if self._render_log_warning else "Render log snapshot"
+                    )
+                else:
+                    destination.write(b"Visible log excerpt (the on-screen history is capped).\n")
+                    destination.write(text.encode("utf-8"))
+                    kind = "Visible log excerpt"
+            os.replace(temporary, path)
+            temporary = None
+            if in_progress:
+                kind = f"Incomplete in-progress {kind.lower()}"
+            self._view.set_status(f"{kind} saved to {path}.")
         except OSError as exc:
             self._view.set_status(f"Could not save log: {exc}", level="error")
+        finally:
+            if temporary is not None:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass
 
     def _on_open_output(self):
         # Give feedback instead of a silent no-op on the always-enabled button (BL-18).

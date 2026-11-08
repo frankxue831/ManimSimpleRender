@@ -65,6 +65,11 @@ class MainViewSmokeTests(unittest.TestCase):
         self.view.append_log("hello world")
         self.assertRegex(self.view.log_text(), r"\[\d{2}:\d{2}:\d{2}\.\d{3}\] hello world")
 
+    def test_render_log_preserves_ingress_timestamp_and_literal_text(self):
+        message = "[2026-11-08T12:34:56.789Z] <b>Scene failure</b>\n[2026-11-08T12:34:57.123Z] next"
+        self.view.append_render_log(message)
+        self.assertEqual(self.view.log_text(), message)
+
     def test_log_area_is_capped_for_long_renders(self):
         # A long verbose render must not grow the log document without bound.
         max_blocks = self.view.log_area.document().maximumBlockCount()

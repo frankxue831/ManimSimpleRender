@@ -111,6 +111,7 @@ new-attempt/
   attempt.json             latest protocol state
   events.jsonl             started + terminal journal, when available
   api.log                  captured Python and native stdout/stderr
+  diagnostics.jsonl        optional private phase timing, not protocol state
   production/scene-.../    normal public API result.json, render.log and artifacts
 ```
 
@@ -139,6 +140,11 @@ Common error codes: `invalid_arguments`, `output_exists`, `output_unavailable`,
 `verification_failed`, `persistence_failed`, `transport_failed`, `interrupted`.
 `diagnostics.stage`, when present, is a known public pipeline stage. Missing-tool
 errors are not guessed from arbitrary log text.
+
+Existing events also carry observed UTC `timestamp`, monotonic `elapsed_seconds`
+and wrapper `phase`. No extra stdout events are emitted. See
+[logging-and-diagnostics.md](logging-and-diagnostics.md) for the phase sidecar,
+failure reasons, privacy limits and timing interpretation.
 
 ## Migration scope and verification
 

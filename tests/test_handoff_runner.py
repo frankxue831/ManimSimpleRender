@@ -51,8 +51,17 @@ class RunnerProtocolTests(unittest.TestCase):
 
 class RunnerIntegrationTests(unittest.TestCase):
     def setUp(self):
+        from unittest.mock import patch
         from scene_production.handoff.ledger import Ledger
 
+        # Identity probing has its own tests. Import before mocking Popen so a
+        # lazy import cannot retain this suite's fake subprocess launcher.
+        identity = patch(
+            "scene_production.handoff.execution_identity.local_execution_identity",
+            return_value=None,
+        )
+        identity.start()
+        self.addCleanup(identity.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name).resolve()
         self.ledger = Ledger.create(self.root / "ledger")
@@ -112,7 +121,12 @@ if mode == 'sleep':
 started = dict(protocol_version=1, event='started', status='running',
                run_token='abc', operation='render', attempt_dir=str(root))
 terminal = dict(protocol_version=1, event='terminal', status='failed',
-                exit_code=1, run_token='abc', operation='render')
+                exit_code=1, run_token='abc', operation='render',
+                error={'code': 'operation_failed', 'private': 'do-not-copy'},
+                diagnostics={'stage': 'decode', 'private': 'do-not-copy',
+                             'failure_reason': 'do-not-copy-private-reason'})
+if mode in ('render_timeout', 'render_cleanup_timeout'):
+    terminal['diagnostics'].update(stage='render', failure_reason=mode)
 if mode in ('success', 'tamper'):
     run = root / 'production' / 'scene-test'; run.mkdir(parents=True)
     for name in ('source.py', 'timeline.json', 'video.mp4', 'frame.png'):
@@ -154,7 +168,27 @@ sys.exit(0 if mode == 'wrong_exit' else terminal['exit_code'])
         self.assertEqual(reconcile_evidence(directory)["status"], "unknown")
 
     def test_failed_exit(self):
-        self.assertEqual(self.run_child("failed")["status"], "failed")
+        result = self.run_child("failed")
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["agent_error_code"], "operation_failed")
+        self.assertEqual(result["agent_stage"], "decode")
+        self.assertNotIn("do-not-copy", json.dumps(result))
+        self.assertNotIn("agent_failure_reason", result)
+
+    def test_failed_render_timeout_preserves_allowlisted_reason(self):
+        result = self.run_child("render_timeout")
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["agent_stage"], "render")
+        self.assertEqual(result["agent_failure_reason"], "render_timeout")
+        self.assertNotIn("do-not-copy", json.dumps(result))
+
+    def test_failed_cleanup_timeout_preserves_failure_without_adopting_success(self):
+        result = self.run_child("render_cleanup_timeout")
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["agent_failure_reason"], "render_cleanup_timeout")
+        self.assertEqual(result["agent_stage"], "render")
+        self.assertNotIn("artifacts", result)
+        self.assertNotIn("do-not-copy", json.dumps(result))
 
     def test_invalid_terminal_and_changed_artifacts(self):
         for mode in ("tamper", "mismatch", "truncated", "intermediate", "wrong_exit", "overflow"):
@@ -165,6 +199,69 @@ sys.exit(0 if mode == 'wrong_exit' else terminal['exit_code'])
                 self.assertEqual(self.run_child(mode)["status"], "unknown")
                 for log in (self.ledger.directory / "outputs").glob("*/*.log"):
                     self.assertLessEqual(log.stat().st_size, 2 * 1024 * 1024)
+
+    def test_timeline_correlates_phases_without_private_payload(self):
+        import os
+
+        result = self.run_child("success")
+        path = Path(result["diagnostics_log"])
+        records = [json.loads(line) for line in path.read_text().splitlines()]
+        phases = [item["phase"] for item in records if item["event"] == "phase_finished"]
+        self.assertEqual(
+            phases,
+            [
+                "prepare",
+                "launch",
+                "process_evidence",
+                "agent_wait",
+                "drain",
+                "verification",
+                "exit_evidence",
+                "ledger_finish",
+            ],
+        )
+        self.assertEqual(records[0]["event"], "claim_finished")
+        self.assertEqual(records[-1]["event"], "attempt_finished")
+        self.assertEqual(records[-1]["status"], "succeeded")
+        for record in records:
+            self.assertEqual(record["task_id"], "task")
+            self.assertEqual(record["attempt_id"], result["attempt_id"])
+            self.assertEqual(record["fence"], result["fence"])
+            self.assertTrue(record["timestamp"].endswith("Z"))
+            self.assertGreaterEqual(record["elapsed_seconds"], 0)
+            self.assertGreaterEqual(record.get("duration_seconds", 0), 0)
+        elapsed = [record["elapsed_seconds"] for record in records]
+        self.assertEqual(elapsed, sorted(elapsed))
+        self.assertNotIn(str(self.source), path.read_text())
+        self.assertNotIn("original_text", path.read_text())
+        self.assertNotIn("do-not-copy", path.read_text())
+        if os.name == "posix":
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_invalid_protocol_has_safe_failure_reason_and_phase(self):
+        result = self.run_child("mismatch")
+        self.assertEqual(result["status"], "unknown")
+        self.assertEqual(result["diagnostic_phase"], "verification")
+        self.assertEqual(result["diagnostic_code"], "protocol_mismatch")
+        self.assertEqual(result["exception_type"], "ValueError")
+        records = [
+            json.loads(line) for line in Path(result["diagnostics_log"]).read_text().splitlines()
+        ]
+        failed = [item for item in records if item["event"] == "phase_failed"]
+        self.assertEqual(failed[0]["phase"], "verification")
+        self.assertEqual(failed[0]["exception_type"], "ValueError")
+
+    def test_timeline_failure_does_not_adopt_or_discard_render_result(self):
+        from unittest.mock import patch
+        from app.render.diagnostics import DiagnosticTimeline
+
+        def unavailable(path, **kwargs):
+            return DiagnosticTimeline(path / "missing", **kwargs)
+
+        with patch("scene_production.handoff.runner.DiagnosticTimeline", side_effect=unavailable):
+            result = self.run_child("success")
+        self.assertEqual(result["status"], "succeeded")
+        self.assertTrue(result["diagnostics_incomplete"])
 
     def test_no_launch_blocked_claims(self):
         from unittest.mock import patch
@@ -197,6 +294,10 @@ sys.exit(0 if mode == 'wrong_exit' else terminal['exit_code'])
             result = run_task(self.ledger, "task", "worker", 1)
         self.assertEqual(result["status"], "unknown")
         self.assertNotIn("secret", json.dumps(result))
+        self.assertEqual(result["diagnostic_phase"], "launch")
+        self.assertEqual(result["diagnostic_code"], "launch_failed")
+        self.assertEqual(result["exception_type"], "OSError")
+        self.assertNotIn("secret", Path(result["diagnostics_log"]).read_text())
 
     def test_revocation_stops_live_child(self):
         from unittest.mock import patch
@@ -214,6 +315,8 @@ sys.exit(0 if mode == 'wrong_exit' else terminal['exit_code'])
             result = self.run_child("sleep")
         self.assertEqual(result["status"], "unknown")
         self.assertTrue(result["exit_observed"])
+        self.assertEqual(result["diagnostic_phase"], "process_evidence")
+        self.assertEqual(result["evidence_error"]["diagnostic_phase"], "exit_evidence")
 
     def test_persistence_failure_is_unknown(self):
         from unittest.mock import patch
@@ -227,7 +330,11 @@ sys.exit(0 if mode == 'wrong_exit' else terminal['exit_code'])
             return original(path, value)
 
         with patch.object(agent, "_atomic_write", side_effect=fail_exit):
-            self.assertEqual(self.run_child("success")["status"], "unknown")
+            result = self.run_child("success")
+        self.assertEqual(result["status"], "unknown")
+        self.assertEqual(result["diagnostic_phase"], "exit_evidence")
+        self.assertEqual(result["diagnostic_code"], "exit_evidence_failed")
+        self.assertNotIn("private detail", json.dumps(result))
 
     def test_expired_fence_rejects_finish(self):
         from unittest.mock import patch
