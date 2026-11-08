@@ -26,7 +26,11 @@ not silently create files for every caller.
 
 For the GUI, use **Save Log** after a run. It copies the complete persisted log
 for the latest batch, including lines no longer in the 5000-block view. During
-a run it exports a byte-length snapshot; later lines are not part of that copy.
+a run it exports a byte-length snapshot, explicitly labelled `INCOMPLETE` in
+both the file and UI; later lines are not part of that copy. Export uses a
+private temporary file and atomic replacement, preserving an existing export
+if copying fails. Exporting to the live log itself only reports its location
+and incomplete state; it never modifies that log.
 If persistence failed, the GUI labels the export as partial, or explicitly falls
 back to the capped view. Startup failures clear the previous batch's log link.
 The first worker output announces the on-disk file location. Output is shown as
@@ -35,10 +39,17 @@ literal text and sparse output is flushed approximately every 200 ms.
 For scene production, start with `result.json` **after the synchronous API has
 returned or raised**, then read the adjacent `diagnostics.jsonl` and `render.log`.
 Failed receipts now include `exception_type` and a fixed `failure_reason`:
-`render_timeout`, `cancelled`, `executable_not_found`, `render_failed`,
-`tool_timeout`, or `exception`. `stage` identifies the observed failure stage;
+`render_timeout`, `render_cleanup_timeout`, `cancelled`, `interrupted`,
+`executable_not_found`, `render_failed`, `tool_timeout`, or `exception`.
+`stage` identifies the observed failure stage;
 the raw `error` field and raw log remain private local diagnostics. A late
-deadline callback cannot relabel an already observed return as a timeout.
+deadline callback cannot relabel an already observed API return as a timeout.
+The budget includes supervision and cleanup: when the subprocess leader's exit
+was observed before the deadline but API completion was not yet recorded, the reason is
+`render_cleanup_timeout`. This remains a failure; leader exit does not prove
+descendant cleanup or verified media. Runners without exit-observation metadata
+retain `render_timeout`. Signal/keyboard interruption records `interrupted` and
+`process_cleanup_verified: false`; the agent still reports `unknown`.
 
 For an agent attempt, retain the `run_token`, process exit and both stdout
 events. The terminal `phase` distinguishes argument/claim/persistence/transport,
@@ -50,6 +61,11 @@ records the nested `scene-*` run ID there. `timeline_write_failed` indicates tha
 this optional sidecar could not be fully written. The sidecar ends before final
 protocol persistence/delivery, so its `operation_outcome` is not the terminal
 protocol result.
+
+The `started` event is constructed with `phase: persistence` before the first
+mandatory state/journal write. It is the same event persisted and then sent to
+stdout, not a live phase cursor. The private timeline separately records
+`initial_persistence` and `started_delivery`.
 
 Early API validation and artifact-verification exceptions also retain their
 tracebacks in private `api.log`, including cases where no production receipt
@@ -77,10 +93,31 @@ and `agent_failure_reason` when their values belong to the supported allowlists.
 For explainer, retain the announced diagnostics directory. `render.log` includes
 received output, supervision diagnostics and unexpected exceptions; the phase
 timeline identifies preparation, rendering, output discovery and publication.
+On successful publication, private `result.json` binds the diagnostic run ID to
+the final video path, size and SHA-256, plus subtitles when copied by that run.
+This records bytes observed after publication; later overwrites do not rewrite
+the earlier receipt. Missing/failed receipt storage warns without changing the
+render outcome. Paths stay out of the phase JSONL. The receipt is not a recovery
+or completion protocol and does not make the output immutable.
+Published hashes must match the source artifact observed before copying; a
+concurrent overwrite that changes those bytes causes binding to be omitted.
 Early storyboard/citation/codegen/missing-Manim preflight failures preserve the
 existing no-output behavior and do not create a diagnostics directory. Public
 scene production likewise validates inputs before creating its run directory;
 use the agent wrapper when those early failures need an attempt record.
+
+GUI batches retain `render-*.implementation.json` beside the raw log. Public
+production, reinspection and Explainer runs retain `implementation.json` in
+their private diagnostic directory. Each includes the run/batch ID, installed
+distribution version (or `unknown`) and a SHA-256 map/fingerprint of the bundled
+`app`, `explainer` and `scene_production` Python sources plus fixed packaged
+config/theme resources. If source observation is unavailable, its status is
+explicitly `unknown`; no partial fingerprint is presented as complete. An
+unwritable manifest warns but does not fail media rendering. These are on-disk
+observations during a recorded interval, not attestation of already loaded
+modules, dependencies, dynamic imports or a reproducible runtime environment.
+Concurrent source edits are not snapshotted atomically. Keep the external
+source/environment manifest when exact production reproducibility is needed.
 
 To inspect a JSONL timeline without additional packages:
 
@@ -107,6 +144,9 @@ and process-local monotonic `elapsed_seconds`. Phase end/failure records carry
 `duration_seconds`. GUI lifecycle records use `elapsed_ms`/`duration_ms` inside
 timestamped text records instead. Raw output timestamps mean **received by the
 application**, not generated inside Manim; child buffering can still delay them.
+Production's existing raw `render.log` remains untimestamped for compatibility;
+use the surrounding phase timeline to bound it, not to infer individual line
+times. GUI and Explainer raw logs have per-received-line timestamps.
 `phase_finished` means that scope returned normally, not that the video passed
 semantic review.
 
@@ -133,7 +173,8 @@ The agent stdout protocol remains version 1 with the same event count. Timing
 and phase fields are additive. Handoff still requires matching stdout, durable
 state/journal, process exit and artifact evidence before accepting success.
 The public receipt's provisional `status: failed` during inspection is unchanged.
-Neither diagnostic JSONL nor a receipt poll establishes termination. Unknown
+Even `status: failed` together with `stage` can be intermediate while the API
+is running. Neither diagnostic JSONL nor a receipt poll establishes termination. Unknown
 attempts keep their conservative fencing/recovery semantics and are never
 automatically retried.
 
@@ -154,6 +195,19 @@ Production raw-log and agent capture failures retain their existing error
 behavior; mandatory agent/ledger state persistence failures still produce
 unknown. A blocked filesystem can still delay logging and lease
 renewal. Missing phase finishes after a crash remain incomplete evidence.
+
+A GUI log without `batch_finished` is incomplete, including after forced
+QThread termination. The flusher is joined before QObject teardown to prevent
+emitting through a deleted object. The application's GUI receiver uses queued
+delivery; an external blocking direct receiver can still delay that join.
+Adding a join timeout alone would not safely solve that lifetime problem.
+
+Explainer logs accumulate under `.explainer-logs`; there is no automatic
+retention/rotation. Remove unwanted run directories manually after retaining
+needed evidence. Without a callback, the diagnostics location and storage
+warnings are written to stderr, so callers must not require stderr to be empty
+on success. The agent wrapper captures these notices privately; the unchanged
+two-event stdout protocol remains separate.
 
 Handoff checks `diagnostics_incomplete` before committing the ledger result.
 A sidecar failure during the final event or close only warns and cannot rewrite
@@ -218,3 +272,10 @@ semantic review is claimed.
 QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest \
   tests.e2e.test_real_render_smoke tests.e2e.test_real_logging_smoke -v
 ```
+
+The PR 26 review follow-up ran **1210 tests: 1199 passed, 11 skipped**, in
+35.802 seconds on the same local Python 3.13 environment. The skip categories
+above are unchanged. Black, Flake8 and citation-gate example verification passed.
+See the separate [review response and evidence checklist](reviews/2026-11-08-pr26-review-followup.md)
+for reproduced findings, fixes and remaining limitations. The earlier frozen
+handoff describes the original PR head, not these follow-up changes.

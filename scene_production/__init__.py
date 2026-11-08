@@ -20,10 +20,26 @@ import tokenize
 from app.render.aggregation import JobOutcome
 from app.render.command_builder import build_command
 from app.render.diagnostics import DiagnosticTimeline, exception_type
+from app.render.implementation import write_implementation_manifest
 from app.render.jobs import RenderJob
 from app.render.quality import known_quality_flags
 from app.render.runner import RenderRunner
 from app.scenes.discovery import _discover_from_tree
+
+
+class _ProductionInterrupted(BaseException):
+    """Marker shared with the signal adapter without importing the agent."""
+
+
+def _record_implementation(run, operation, diagnostics):
+    if not write_implementation_manifest(
+        run / "implementation.json", operation=operation, run_id=run.name
+    ):
+        diagnostics.event("implementation_manifest_unavailable")
+        try:
+            print("Warning: implementation manifest unavailable.", file=sys.stderr)
+        except (OSError, ValueError):
+            pass
 
 
 def _font_failure_hint(log_path):
@@ -201,10 +217,14 @@ def _failure(run, receipt, stage, exc, diagnostics=None):
         error=str(exc),
         exception_type=exception_type(exc),
     )
-    receipt.setdefault(
-        "failure_reason",
-        "tool_timeout" if isinstance(exc, subprocess.TimeoutExpired) else "exception",
-    )
+    if isinstance(exc, (_ProductionInterrupted, KeyboardInterrupt, SystemExit)):
+        receipt["failure_reason"] = "interrupted"
+        receipt["process_cleanup_verified"] = False
+    else:
+        receipt.setdefault(
+            "failure_reason",
+            "tool_timeout" if isinstance(exc, subprocess.TimeoutExpired) else "exception",
+        )
     if diagnostics is not None:
         diagnostics.event(
             "production_failed",
@@ -441,6 +461,7 @@ def render(
     ) as diagnostics:
         diagnostics.event("production_started")
         try:
+            _record_implementation(run, "render", diagnostics)
             with _production_phase(receipt, diagnostics, "prepare"):
                 (run / "source.py").write_bytes(raw_source)
                 (run / "timeline.json").write_bytes(raw)
@@ -502,13 +523,35 @@ def render(
                         timer.join()
                     if outcome.diagnostic:
                         log.write(outcome.diagnostic + "\n")
-                diagnostics.event(
-                    "render_result", outcome=outcome.outcome.value, return_code=outcome.return_code
-                )
                 timed_out = deadline_fired_at is not None and deadline_fired_at <= completed_at
+                observed_exit = getattr(outcome, "leader_exit_observed_at", None)
+                exit_before_deadline = None
+                if (
+                    type(observed_exit) in (int, float)
+                    and math.isfinite(observed_exit)
+                    and deadline_fired_at is not None
+                ):
+                    exit_before_deadline = observed_exit < deadline_fired_at
+                diagnostics.event(
+                    "render_result",
+                    outcome=outcome.outcome.value,
+                    return_code=outcome.return_code,
+                    leader_exit_observed_before_deadline=exit_before_deadline,
+                )
                 if timed_out or (cancelled_at_completion and deadline_fired_at is None):
-                    receipt["failure_reason"] = "render_timeout" if timed_out else "cancelled"
-                    raise RuntimeError("render timed out" if timed_out else "render cancelled")
+                    if timed_out:
+                        # The budget includes output draining and process-tree
+                        # cleanup. A leader exit alone cannot certify success.
+                        receipt["failure_reason"] = (
+                            "render_cleanup_timeout" if exit_before_deadline else "render_timeout"
+                        )
+                        raise RuntimeError(
+                            "render cleanup timed out"
+                            if exit_before_deadline
+                            else "render timed out"
+                        )
+                    receipt["failure_reason"] = "cancelled"
+                    raise RuntimeError("render cancelled")
                 if outcome.outcome != JobOutcome.SUCCESS or outcome.return_code != 0:
                     receipt["failure_reason"] = (
                         "executable_not_found"

@@ -322,12 +322,15 @@ class WorkerLogAndResultTests(unittest.TestCase):
             self.assertEqual(len(paths), 1)
             with open(paths[0], encoding="utf-8") as handle:
                 lines = handle.read().splitlines()
+            manifest = json.loads(Path(paths[0]).with_suffix(".implementation.json").read_text())
             if os.name == "posix":
                 self.assertEqual(os.stat(paths[0]).st_mode & 0o777, 0o600)
         for line in lines:
             self.assertRegex(line, r"^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\] ")
         events = [json.loads(line.split("] ", 1)[1]) for line in lines if "] {" in line]
         self.assertEqual(len({event["batch_id"] for event in events}), 1)
+        self.assertEqual(manifest["run_id"], events[0]["batch_id"])
+        self.assertEqual(manifest["operation"], "gui_render")
         self.assertEqual(events[0]["event"], "batch_started")
         self.assertEqual(events[-1]["event"], "batch_finished")
         results = [event for event in events if event["event"] == "job_finished"]
@@ -373,8 +376,15 @@ class WorkerLogAndResultTests(unittest.TestCase):
                 worker.logging_failed.connect(warnings.append)
                 worker.job_result.connect(lambda job, outcome, code: results.append(outcome))
                 worker.log.connect(logs.append)
-                with mock.patch.object(
-                    worker, "_open_log_file", return_value=None if operation == "open" else handle
+                with (
+                    mock.patch.object(
+                        worker,
+                        "_open_log_file",
+                        return_value=None if operation == "open" else handle,
+                    ),
+                    mock.patch(
+                        "app.render.worker.write_implementation_manifest", return_value=True
+                    ),
                 ):
                     worker.run()
                 self.assertEqual(results, [JobOutcome.SUCCESS])
@@ -382,6 +392,22 @@ class WorkerLogAndResultTests(unittest.TestCase):
                 self.assertIn(operation, warnings[0])
                 self.assertIn(warnings[0], "\n".join(logs))
                 self.assertNotIn("private detail", "\n".join(logs))
+
+    def test_identity_persistence_failure_is_visible_without_failing_render(self):
+        with tempfile.TemporaryDirectory() as out:
+            worker = RenderWorker([RenderJob("a.py", "A")], "-ql", "", out, runner=FakeRunner())
+            diagnostics, logging, results, paths = [], [], [], []
+            worker.diagnostics_failed.connect(diagnostics.append)
+            worker.logging_failed.connect(logging.append)
+            worker.job_result.connect(lambda job, outcome, code: results.append(outcome))
+            worker.log_file_ready.connect(paths.append)
+            with mock.patch("app.render.worker.write_implementation_manifest", return_value=False):
+                worker.run()
+            self.assertEqual(results, [JobOutcome.SUCCESS])
+            self.assertEqual(logging, [])
+            self.assertEqual(len(diagnostics), 1)
+            self.assertIn("runtime identity is unverified", diagnostics[0])
+            self.assertIn(diagnostics[0], Path(paths[0]).read_text())
 
     def test_job_result_diagnostic_is_logged(self):
         class DiagnosticRunner:

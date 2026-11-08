@@ -8,6 +8,7 @@ import io
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
@@ -209,6 +210,41 @@ class AgentProtocolTests(unittest.TestCase):
         self.assertEqual(events[-1]["status"], "unknown")
         self.assertFalse(events[-1]["process_cleanup_verified"])
         self.assertEqual(json.loads((self.output / "attempt.json").read_text()), events[-1])
+
+    def test_signal_interruption_retains_production_reason_and_unknown_protocol(self):
+        source = self.root / "scene.py"
+        source.write_text(
+            "from manim import Scene\nclass Demo(Scene):\n def construct(self): pass\n"
+        )
+        timeline = self.root / "timeline.json"
+        timeline.write_text('{"version":1,"segments":[{"label":"intro","start":0,"end":1}]}')
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            self.output = self.root / str(signum)
+            arguments = [
+                "render",
+                "--timeline",
+                str(timeline),
+                "--output-dir",
+                str(self.output),
+                "--scene-file",
+                str(source),
+                "--scene",
+                "Demo",
+            ]
+            with self.subTest(signum=signum), patch("scene_production.RenderRunner") as runner:
+                runner.return_value.run_job.side_effect = lambda *args: signal.raise_signal(signum)
+                code, events = self.invoke(arguments)
+            self.assertEqual(code, 128 + signum)
+            self.assertEqual([e["event"] for e in events], ["started", "terminal"])
+            terminal = events[-1]
+            self.assertEqual(terminal["status"], "unknown")
+            self.assertFalse(terminal["retry_safe"])
+            self.assertFalse(terminal["process_cleanup_verified"])
+            self.assertEqual(terminal["diagnostics"]["failure_reason"], "interrupted")
+            self.assertEqual(terminal["diagnostics"]["stage"], "render")
+            receipt = json.loads(Path(terminal["diagnostics"]["receipt"]).read_text())
+            self.assertEqual(receipt["failure_reason"], "interrupted")
+            self.assertFalse(receipt["process_cleanup_verified"])
 
     def test_success_result_with_changed_artifact_is_rejected(self):
         def api(**kwargs):

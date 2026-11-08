@@ -125,8 +125,8 @@ terminal = dict(protocol_version=1, event='terminal', status='failed',
                 error={'code': 'operation_failed', 'private': 'do-not-copy'},
                 diagnostics={'stage': 'decode', 'private': 'do-not-copy',
                              'failure_reason': 'do-not-copy-private-reason'})
-if mode == 'render_timeout':
-    terminal['diagnostics'].update(stage='render', failure_reason='render_timeout')
+if mode in ('render_timeout', 'render_cleanup_timeout'):
+    terminal['diagnostics'].update(stage='render', failure_reason=mode)
 if mode in ('success', 'tamper'):
     run = root / 'production' / 'scene-test'; run.mkdir(parents=True)
     for name in ('source.py', 'timeline.json', 'video.mp4', 'frame.png'):
@@ -180,6 +180,14 @@ sys.exit(0 if mode == 'wrong_exit' else terminal['exit_code'])
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["agent_stage"], "render")
         self.assertEqual(result["agent_failure_reason"], "render_timeout")
+        self.assertNotIn("do-not-copy", json.dumps(result))
+
+    def test_failed_cleanup_timeout_preserves_failure_without_adopting_success(self):
+        result = self.run_child("render_cleanup_timeout")
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["agent_failure_reason"], "render_cleanup_timeout")
+        self.assertEqual(result["agent_stage"], "render")
+        self.assertNotIn("artifacts", result)
         self.assertNotIn("do-not-copy", json.dumps(result))
 
     def test_invalid_terminal_and_changed_artifacts(self):

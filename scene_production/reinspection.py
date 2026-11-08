@@ -13,6 +13,7 @@ from . import (
     _failure,
     _inspect_video,
     _production_phase,
+    _record_implementation,
     _verify_file,
     _write_receipt,
     load_timeline,
@@ -99,6 +100,7 @@ def reinspect(from_run, timeline, output_dir, tool_timeout=30):
     ) as diagnostics:
         diagnostics.event("production_started")
         try:
+            _record_implementation(run, "reinspect", diagnostics)
             with _production_phase(receipt, diagnostics, "copy"):
                 _write_receipt(run, receipt)
                 shutil.copyfile(source, run / "source.py")

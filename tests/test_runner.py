@@ -94,12 +94,15 @@ class RunJobTests(unittest.TestCase):
         self.logs.append(line)
 
     def test_exit_zero_is_success(self):
+        started = time.monotonic()
         result = self.runner.run_job(
             JOB, [PY, "-c", "print('hello')"], cancel_event=None, on_log=self._log
         )
         self.assertEqual(result.outcome, JobOutcome.SUCCESS)
         self.assertEqual(result.return_code, 0)
         self.assertIn("hello", self.logs)
+        self.assertLessEqual(started, result.leader_exit_observed_at)
+        self.assertLessEqual(result.leader_exit_observed_at, time.monotonic())
 
     def test_nonzero_exit_is_failed_with_real_code(self):
         result = self.runner.run_job(JOB, [PY, "-c", "import sys; sys.exit(3)"], None, self._log)
@@ -120,6 +123,7 @@ class RunJobTests(unittest.TestCase):
     def test_missing_executable_is_manim_not_found(self):
         result = self.runner.run_job(JOB, ["this-binary-does-not-exist-xyz123"], None, self._log)
         self.assertEqual(result.outcome, JobOutcome.MANIM_NOT_FOUND)
+        self.assertIsNone(result.leader_exit_observed_at)
 
     def test_complete_child_environment_is_forwarded(self):
         env = dict(os.environ)

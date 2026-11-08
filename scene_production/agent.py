@@ -21,7 +21,7 @@ import traceback
 
 from app.render.diagnostics import DiagnosticTimeline, utc_timestamp
 
-from . import _font_failure_hint, digest, pairs
+from . import _ProductionInterrupted, _font_failure_hint, digest, pairs
 
 VERSION = 1
 STAGES = {
@@ -43,7 +43,7 @@ class _UsageError(Exception):
     pass
 
 
-class _Interrupted(BaseException):
+class _Interrupted(_ProductionInterrupted):
     def __init__(self, signum):
         self.signum = signum
 
@@ -307,6 +307,8 @@ def _diagnostics(attempt, exc=None):
             result["stage"] = receipt["stage"]
         if receipt.get("failure_reason") in {
             "render_timeout",
+            "render_cleanup_timeout",
+            "interrupted",
             "cancelled",
             "tool_timeout",
             "render_failed",

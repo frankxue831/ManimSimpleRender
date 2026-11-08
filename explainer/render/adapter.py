@@ -7,8 +7,10 @@ time, so the manim subprocess is given ``PYTHONPATH`` = repo root.
 """
 
 import glob
+import hashlib
 from contextlib import nullcontext
 from datetime import datetime, timezone
+import json
 import os
 import shutil
 import sys
@@ -17,7 +19,8 @@ import traceback
 
 from app.render.aggregation import JobOutcome
 from app.render.command_builder import build_command, manim_available
-from app.render.diagnostics import DiagnosticTimeline, exception_type
+from app.render.diagnostics import DiagnosticTimeline, exception_type, utc_timestamp
+from app.render.implementation import write_implementation_manifest
 from app.render.jobs import RenderJob
 from app.render.quality import quality_flag_for_height
 from app.render.runner import RenderRunner
@@ -52,6 +55,90 @@ def _diagnostic_directory(out_path, on_log):
         return None
     _log_notice(on_log, "Render diagnostics: " + directory)
     return directory
+
+
+def _artifact_binding(path):
+    """Observe file bytes; reject a file that changes during observation."""
+    path = os.path.abspath(path)
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        before = os.fstat(handle.fileno())
+        size = 0
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+            size += len(chunk)
+        after = os.fstat(handle.fileno())
+    current = os.stat(path)
+
+    def identity(stat):
+        return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+
+    if (
+        identity(before) != identity(after)
+        or identity(after) != identity(current)
+        or size != after.st_size
+    ):
+        raise OSError("published artifact changed during observation")
+    return {"path": path, "size_bytes": size, "sha256": digest.hexdigest()}
+
+
+def _source_binding(path):
+    """A diagnostic snapshot failure must not prevent media publication."""
+    try:
+        return _artifact_binding(path)
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def _write_result_receipt(directory, out_path, srt_path, expected, on_log):
+    """Keep private output identity after temporary media is removed.
+
+    This optional receipt describes the files observed after publication, not
+    immutable output storage or a completion/recovery protocol.
+    """
+    if directory is None:
+        return False
+    temporary = None
+    try:
+        artifacts = {"video": _artifact_binding(out_path)}
+        if srt_path is not None:
+            artifacts["subtitles"] = _artifact_binding(srt_path)
+        for kind, artifact in artifacts.items():
+            source = expected.get(kind)
+            if source is None or any(
+                artifact[field] != source[field] for field in ("size_bytes", "sha256")
+            ):
+                raise OSError("published artifact differs from rendered source")
+        receipt = {
+            "schema_version": 1,
+            "operation": "explainer_render",
+            "run_id": os.path.basename(directory),
+            "status": "succeeded",
+            "observed_at": utc_timestamp(),
+            "artifacts": artifacts,
+        }
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix=".result-",
+            suffix=".tmp",
+            dir=directory,
+            delete=False,
+        ) as handle:
+            temporary = handle.name
+            json.dump(receipt, handle, ensure_ascii=True, allow_nan=False)
+            handle.write("\n")
+        os.replace(temporary, os.path.join(directory, "result.json"))
+        return True
+    except (OSError, ValueError, TypeError):
+        _log_notice(on_log, "Warning: persistent render artifact binding unavailable.")
+        return False
+    finally:
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
 
 
 class _RenderLog:
@@ -186,6 +273,14 @@ def render_storyboard(storyboard_path, out_path, quality=None, lang="en", on_log
                     "run_id": os.path.basename(diagnostic_dir),
                 },
             )
+            implementation_available = write_implementation_manifest(
+                os.path.join(diagnostic_dir, "implementation.json"),
+                operation="explainer_render",
+                run_id=os.path.basename(diagnostic_dir),
+            )
+            timeline.event("implementation_manifest", available=implementation_available)
+            if not implementation_available:
+                _log_notice(on_log, "Warning: render implementation manifest unavailable.")
         phase = timeline.phase if timeline is not None else lambda name: nullcontext()
         with phase("prepare"):
             scene_file = os.path.join(workdir, "explainer_scene.py")
@@ -225,11 +320,20 @@ def render_storyboard(storyboard_path, out_path, quality=None, lang="en", on_log
 
         with phase("publication"):
             os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
+            expected = {"video": _source_binding(produced[0])} if diagnostic_dir else {}
             shutil.copyfile(produced[0], out_path)
             srt = os.path.splitext(produced[0])[0] + ".srt"
+            srt_path = None
             if os.path.exists(srt):
-                shutil.copyfile(srt, os.path.splitext(out_path)[0] + ".srt")
+                srt_path = os.path.splitext(out_path)[0] + ".srt"
+                if diagnostic_dir:
+                    expected["subtitles"] = _source_binding(srt)
+                shutil.copyfile(srt, srt_path)
+        receipt_available = _write_result_receipt(
+            diagnostic_dir, out_path, srt_path, expected, on_log
+        )
         if timeline is not None:
+            timeline.event("artifact_binding", available=receipt_available)
             timeline.event("operation_finished", status="succeeded")
     except BaseException as exc:
         if log is not None:

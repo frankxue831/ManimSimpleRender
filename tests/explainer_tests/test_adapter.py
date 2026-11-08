@@ -5,6 +5,7 @@ review flagged as untested: resolution->quality mapping, the citation gate firin
 BEFORE any render side effect, theme-derived quality, and child-only PYTHONPATH.
 """
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -72,6 +73,23 @@ class _FakeRunner:
 class _ExplodingRunner:
     def __init__(self, *a, **k):
         raise AssertionError("runner must NOT be constructed when the citation gate fails")
+
+
+class _ProducingRunner(_FakeRunner):
+    """Write real test artifacts so publication and receipt hashing are exercised."""
+
+    video = b"first test video"
+    subtitles = None
+
+    def run_job(self, job, command, cancel_event=None, on_log=None, env=None):
+        result = super().run_job(job, command, cancel_event, on_log, env)
+        media = Path(command[command.index("--media_dir") + 1])
+        target = media / "videos" / "explainer_scene" / "1080p60" / "ExplainerVideo.mp4"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(self.video)
+        if self.subtitles is not None:
+            target.with_suffix(".srt").write_bytes(self.subtitles)
+        return result
 
 
 class _RaisingRunner:
@@ -225,6 +243,177 @@ class AdapterOrchestrationTests(unittest.TestCase):
         self.assertIn("fake child output", self.logs)
 
     @patch("explainer.render.adapter.manim_available", return_value=True)
+    @patch("explainer.render.adapter.RenderRunner", _ProducingRunner)
+    @patch("explainer.render.adapter.verify_storyboard", return_value=[])
+    def test_receipts_distinguish_outputs_and_survive_target_overwrite(self, *_mocks):
+        calls = [
+            (self.output, b"first video"),
+            (str(self.root / "second.mp4"), b"second video"),
+            (self.output, b"replacement video"),
+        ]
+        for output, video in calls:
+            with patch.object(_ProducingRunner, "video", video):
+                self.assertEqual(
+                    render_storyboard(EXAMPLE, output, on_log=self.logs.append), output
+                )
+        directories = list((self.root / ".explainer-logs").glob("run-*"))
+        self.assertEqual(len(directories), 3)
+        receipts = {}
+        for directory in directories:
+            receipt_path = directory / "result.json"
+            receipt = json.loads(receipt_path.read_text())
+            self.assertEqual(receipt["status"], "succeeded")
+            self.assertEqual(receipt["run_id"], directory.name)
+            self.assertEqual(receipt["operation"], "explainer_render")
+            self.assertIn("observed_at", receipt)
+            implementation_path = directory / "implementation.json"
+            implementation = json.loads(implementation_path.read_text())
+            self.assertEqual(implementation["operation"], "explainer_render")
+            self.assertEqual(implementation["run_id"], receipt["run_id"])
+            self.assertEqual(implementation["implementation"]["source"]["status"], "observed")
+            video = receipt["artifacts"]["video"]
+            receipts[video["sha256"]] = video
+            events = (directory / "diagnostics.jsonl").read_text()
+            self.assertNotIn(str(self.root), events)
+            self.assertTrue(
+                any(
+                    event["event"] == "artifact_binding" and event["available"]
+                    for event in map(json.loads, events.splitlines())
+                )
+            )
+            if os.name == "posix":
+                self.assertEqual(receipt_path.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(implementation_path.stat().st_mode & 0o777, 0o600)
+        for output, data in calls:
+            self.assertEqual(
+                receipts[hashlib.sha256(data).hexdigest()],
+                {
+                    "path": output,
+                    "size_bytes": len(data),
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                },
+            )
+        self.assertEqual(Path(self.output).read_bytes(), calls[-1][1])
+
+    @patch("explainer.render.adapter.manim_available", return_value=True)
+    @patch("explainer.render.adapter.RenderRunner", _ProducingRunner)
+    @patch("explainer.render.adapter.verify_storyboard", return_value=[])
+    def test_receipt_binds_only_subtitles_copied_by_this_run(self, *_mocks):
+        subtitles = b"1\n00:00:00,000 --> 00:00:01,000\nCaption\n"
+        with patch.object(_ProducingRunner, "subtitles", subtitles):
+            render_storyboard(EXAMPLE, self.output, on_log=self.logs.append)
+        receipt = json.loads((self.diagnostic_directory() / "result.json").read_text())
+        self.assertEqual(
+            receipt["artifacts"]["subtitles"],
+            {
+                "path": str(Path(self.output).with_suffix(".srt")),
+                "size_bytes": len(subtitles),
+                "sha256": hashlib.sha256(subtitles).hexdigest(),
+            },
+        )
+        # An old SRT at the destination must not become an artifact of a later
+        # render that produced no subtitles.
+        previous = self.diagnostic_directory()
+        render_storyboard(EXAMPLE, self.output, on_log=self.logs.append)
+        latest = next(path for path in previous.parent.iterdir() if path != previous)
+        self.assertNotIn("subtitles", json.loads((latest / "result.json").read_text())["artifacts"])
+
+    @patch("explainer.render.adapter.manim_available", return_value=True)
+    @patch("explainer.render.adapter.RenderRunner", _ProducingRunner)
+    @patch("explainer.render.adapter.verify_storyboard", return_value=[])
+    def test_replaced_publication_is_not_bound_to_this_run(self, *_mocks):
+        original_copy = shutil.copyfile
+        for suffix in (".mp4", ".srt"):
+            with self.subTest(replaced=suffix):
+                before = set((self.root / ".explainer-logs").glob("run-*"))
+
+                def replaced_copy(source, destination):
+                    result = original_copy(source, destination)
+                    if Path(destination).suffix == suffix:
+                        Path(destination).write_bytes(b"OTHER_RENDER_OUTPUT")
+                    return result
+
+                with (
+                    patch("explainer.render.adapter.shutil.copyfile", side_effect=replaced_copy),
+                    patch.object(_ProducingRunner, "subtitles", b"this run's subtitles"),
+                ):
+                    result = render_storyboard(EXAMPLE, self.output, on_log=self.logs.append)
+                self.assertEqual(result, self.output)
+                directory = (set((self.root / ".explainer-logs").glob("run-*")) - before).pop()
+                self.assertFalse((directory / "result.json").exists())
+                events = [
+                    json.loads(line)
+                    for line in (directory / "diagnostics.jsonl").read_text().splitlines()
+                ]
+                self.assertEqual(
+                    [
+                        event["available"]
+                        for event in events
+                        if event["event"] == "artifact_binding"
+                    ],
+                    [False],
+                )
+                self.assertTrue(any(event["event"] == "operation_finished" for event in events))
+                self.assertIn("Warning: persistent render artifact binding unavailable.", self.logs)
+
+    @patch("explainer.render.adapter.manim_available", return_value=True)
+    @patch("explainer.render.adapter.RenderRunner", _ProducingRunner)
+    @patch("explainer.render.adapter.verify_storyboard", return_value=[])
+    def test_source_snapshot_failure_does_not_block_publication(self, *_mocks):
+        from explainer.render.adapter import _artifact_binding
+
+        def unavailable_source(path):
+            if Path(path).name == "ExplainerVideo.mp4":
+                raise PermissionError("private source details")
+            return _artifact_binding(path)
+
+        with patch("explainer.render.adapter._artifact_binding", side_effect=unavailable_source):
+            self.assertEqual(
+                render_storyboard(EXAMPLE, self.output, on_log=self.logs.append), self.output
+            )
+        self.assertEqual(Path(self.output).read_bytes(), _ProducingRunner.video)
+        self.assertFalse((self.diagnostic_directory() / "result.json").exists())
+        self.assertIn("Warning: persistent render artifact binding unavailable.", self.logs)
+        self.assertNotIn("private source details", "\n".join(self.logs))
+
+    @patch("explainer.render.adapter.manim_available", return_value=True)
+    @patch("explainer.render.adapter.RenderRunner", _ProducingRunner)
+    @patch("explainer.render.adapter.verify_storyboard", return_value=[])
+    def test_receipt_write_failure_keeps_success_and_removes_partial_file(self, *_mocks):
+        with patch(
+            "explainer.render.adapter.os.replace", side_effect=OSError("private disk details")
+        ):
+            result = render_storyboard(EXAMPLE, self.output, on_log=self.logs.append)
+        self.assertEqual(result, self.output)
+        self.assertEqual(Path(self.output).read_bytes(), _ProducingRunner.video)
+        directory = self.diagnostic_directory()
+        self.assertFalse((directory / "result.json").exists())
+        self.assertEqual(list(directory.glob(".result-*.tmp")), [])
+        self.assertIn("Warning: persistent render artifact binding unavailable.", self.logs)
+        self.assertNotIn("private disk details", "\n".join(self.logs))
+        events = self.diagnostic_events()
+        self.assertIn(
+            False, [event["available"] for event in events if event["event"] == "artifact_binding"]
+        )
+        self.assertTrue(any(event["event"] == "operation_finished" for event in events))
+
+    @patch("explainer.render.adapter.write_implementation_manifest", return_value=False)
+    @patch("explainer.render.adapter.manim_available", return_value=True)
+    @patch("explainer.render.adapter.RenderRunner", _ProducingRunner)
+    @patch("explainer.render.adapter.verify_storyboard", return_value=[])
+    def test_implementation_manifest_failure_warns_without_changing_result(self, *_mocks):
+        self.assertEqual(
+            render_storyboard(EXAMPLE, self.output, on_log=self.logs.append), self.output
+        )
+        self.assertIn("Warning: render implementation manifest unavailable.", self.logs)
+        self.assertTrue((self.diagnostic_directory() / "result.json").exists())
+        events = self.diagnostic_events()
+        self.assertEqual(
+            [event["available"] for event in events if event["event"] == "implementation_manifest"],
+            [False],
+        )
+
+    @patch("explainer.render.adapter.manim_available", return_value=True)
     @patch("explainer.render.adapter.verify_storyboard", return_value=[])
     def test_failed_render_keeps_scene_logs_and_sanitized_outcome(self, *_mocks):
         class FailingRunner:
@@ -250,6 +439,7 @@ class AdapterOrchestrationTests(unittest.TestCase):
         self.assertFalse(
             any(event["event"] == "operation_finished" for event in self.diagnostic_events())
         )
+        self.assertFalse((directory / "result.json").exists())
 
     @patch("explainer.render.adapter.manim_available", return_value=True)
     @patch("explainer.render.adapter.shutil.copyfile")

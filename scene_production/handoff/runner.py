@@ -167,6 +167,8 @@ def _handoff_result(directory):
         reason = diagnostics.get("failure_reason") if isinstance(diagnostics, dict) else None
         if isinstance(reason, str) and reason in {
             "render_timeout",
+            "render_cleanup_timeout",
+            "interrupted",
             "cancelled",
             "executable_not_found",
             "render_failed",

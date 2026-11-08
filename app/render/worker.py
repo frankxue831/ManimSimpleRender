@@ -15,11 +15,13 @@ import secrets
 import threading
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 from PyQt5.QtCore import QThread, Qt, pyqtSignal
 
 from app.render.aggregation import JobOutcome, RenderSummary
 from app.render.command_builder import build_command, display_command
+from app.render.implementation import write_implementation_manifest
 from app.render.runner import RenderRunner
 
 # Coalesce this many streamed lines into one cross-thread log signal so a verbose
@@ -33,6 +35,7 @@ class RenderWorker(QThread):
     log = pyqtSignal(str)  # carries a batch of newline-joined lines (BL-29)
     log_file_ready = pyqtSignal(str)
     logging_failed = pyqtSignal(str)
+    diagnostics_failed = pyqtSignal(str)
     progress = pyqtSignal(int, int)  # (completed, total)
     job_result = pyqtSignal(object, object, object)  # (RenderJob, JobOutcome, return_code)
     finished_summary = pyqtSignal(object)  # RenderSummary; controller wires finished -> deleteLater
@@ -196,6 +199,18 @@ class RenderWorker(QThread):
                 logging_failure("open")
             else:
                 self.log_file_ready.emit(os.path.abspath(log_file.name))
+                manifest_path = Path(log_file.name).with_suffix(".implementation.json")
+                if write_implementation_manifest(
+                    manifest_path, operation="gui_render", run_id=batch_id
+                ):
+                    emit_line(f"Implementation manifest: {manifest_path}")
+                else:
+                    warning = (
+                        "Implementation manifest unavailable; runtime identity is unverified. "
+                        "Rendering continues."
+                    )
+                    emit_line("WARNING: " + warning)
+                    self.diagnostics_failed.emit(warning)
             event("batch_started", jobs=total)
             self._flush_thread = threading.Thread(
                 target=periodic_flush, daemon=True, name=f"msr-log-flush-{batch_id}"
