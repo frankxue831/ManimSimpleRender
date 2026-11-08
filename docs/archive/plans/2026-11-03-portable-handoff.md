@@ -1,11 +1,16 @@
 # Portable Handoff Implementation Plan
 
+> Historical record. Original path: `docs/superpowers/plans/2026-11-03-portable-handoff.md`.
+> Findings, commands and validation counts describe the recorded revision and environment,
+> not current acceptance. Historical command paths may refer to the original layout.
+> See the [current guide](../../portable-projects.md) and [archive index](../README.md).
+
 > **For agentic workers:** Execute inline using superpowers:executing-plans; use a fresh receiving agent and final reviewer for acceptance.
 
 **Goal:** Export explicit inputs and preflight a received ordinary Manim project.
 **Architecture:** One bounded archive/environment/CLI module in scene_production, reusing static revision validation and existing render/revision APIs.
 **Tech Stack:** Python stdlib, existing Manim/FFmpeg environment; no new dependencies.
-**Spec:** docs/superpowers/specs/2026-11-03-portable-handoff-design.md
+**Spec:** [Portable handoff design](../designs/2026-11-03-portable-handoff-design.md)
 
 ## Global Constraints
 

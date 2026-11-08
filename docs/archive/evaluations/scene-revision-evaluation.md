@@ -1,5 +1,10 @@
 # Two-case local evaluation
 
+> Historical record. Original path: `docs/scene-revision-evaluation.md`.
+> Findings, commands and validation counts describe the recorded revision and environment,
+> not current acceptance. Historical command paths may refer to the original layout.
+> See the [current guide](../../scene-revision.md) and [archive index](../README.md).
+
 This evaluation used ordinary full Manim renders on base `ac2bf85`. No partial
 rendering/cache, automatic feedback understanding, or user-comprehension result
 is claimed. Each case was limited to two major revision rounds: one semantic
@@ -61,7 +66,7 @@ The retained introduction's original "no product code changed" footer describes
 that earlier production; this iteration adds an external revision helper while
 leaving the ordinary render/check CLI unchanged.
 
-Reproduction uses the commands in [scene-revision.md](scene-revision.md), with
+Reproduction uses the commands in [scene-revision.md](../../scene-revision.md), with
 retained local case manifests, `plan-final.json`, `repair-plan.json`, edits,
 canonical run receipts, append-only version directories and `acceptance.json`.
 Artifacts and videos are deliberately outside Git; the product commit contains

@@ -1,5 +1,7 @@
 # Silent concept rendering
 
+[Documentation index](README.md) | [Agent quick start](agent-quickstart.md)
+
 Run these commands from the source checkout using its existing Python and Manim environment. The selected Python must already support the application's render modules and Manim, including its existing text/font and rendering requirements. Inspection additionally requires existing `ffprobe` and `ffmpeg` executables on PATH. These commands do not install anything or use the GUI. No installed package entry point is provided.
 
 Render command: `python -m concept_render --input concept.json --output-dir output/concepts --timeout 60`

@@ -1,5 +1,10 @@
 # Scene revision experiment evidence
 
+> Historical record. Original path: `docs/scene-revision-experiments.md`.
+> Findings, commands and validation counts describe the recorded revision and environment,
+> not current acceptance. Historical command paths may refer to the original layout.
+> See the [current guide](../../scene-revision.md) and [archive index](../README.md).
+
 This is local evidence from a bounded exploration, not a claim of automatic video
 authoring, semantic verification or measured workflow efficiency. The earlier
 closed evaluation (one passing case, one failing index case) remains unchanged.

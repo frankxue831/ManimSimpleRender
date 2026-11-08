@@ -4,6 +4,47 @@ All notable changes to this project are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Ordinary Scene production and recorded-video reinspection, with media checks,
+  retained inputs, frames and receipts (#16).
+- Hand-authored Netty EventLoop and TCP message-framing examples with inspection
+  timelines and font-coverage checks (#16).
+- Explicit silent-scene revisions, stable section IDs, frame evidence, guarded
+  edits and retained rollback versions (#17).
+- Portable selected-file project export, inspection, unpacking and receiving
+  preflight, including isolated trusted-launcher support (#21).
+- Caption/SRT sidecars, existing-WAV audio previews, caption-linked frame samples
+  and a JSONL agent interface over production and reinspection (#24).
+- Local task dependencies, authorization-source records, fenced claims, pull inbox
+  and audited recovery for multi-agent handoff (#25).
+- Fixed-message font-failure diagnostics and recorded-video reinspection through
+  the isolated trusted launcher (#22).
+- Render phase diagnostics, complete GUI log export, implementation fingerprints
+  and Explainer output identity records (#26).
+
+### Fixed
+
+- Generated diagram motion validates actor/path start consistency and preserves
+  destination visibility and actor layering (#23).
+
+### Known limits
+
+- Inspection timelines select checks; they do not drive animation. Media checks
+  and sampled visual review do not establish factual correctness or full-playback acceptance.
+- Revision restore requires retained baseline and candidate runs and media; it is
+  not a crash-atomic multi-file transaction. See the
+  [revision guide](docs/scene-revision.md#retention-and-restore-verification) for retention
+  requirements and [platform evidence](docs/scene-revision.md#optional-observed-frame-evidence).
+
+### Docs
+
+- Agent quick start and task-oriented documentation navigation.
+- Historical plans, migrations, evaluations and reviews grouped under `docs/archive/`.
+- Current usage, architecture status and development-check instructions refreshed.
+
 ## [0.2.0] - 2026-10-23
 
 ### Breaking: how you install it
@@ -81,5 +122,6 @@ The exit codes are 0 ok, 2 validation error, 3 citation miss, 4 render failure, 
 
 First tagged release (`6973ba4`).
 
+[Unreleased]: https://github.com/frankxue831/ManimSimpleRender/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/frankxue831/ManimSimpleRender/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/frankxue831/ManimSimpleRender/releases/tag/v0.1.0

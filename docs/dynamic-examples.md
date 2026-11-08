@@ -1,5 +1,7 @@
 # Dynamic explanation examples
 
+[Documentation index](README.md) | [Agent quick start](agent-quickstart.md)
+
 These are hand-authored, silent Chinese Manim scenes, not outputs of an automatic
 one-prompt video generator. Their timeline JSON files select inspection frames;
 the Python scenes themselves control animation and teaching pauses.

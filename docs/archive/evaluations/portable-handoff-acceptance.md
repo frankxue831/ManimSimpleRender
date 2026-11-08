@@ -1,5 +1,10 @@
 # Portable handoff MVP acceptance (2026-11-03)
 
+> Historical record. Original path: `docs/portable-handoff-acceptance.md`.
+> Findings, commands and validation counts describe the recorded revision and environment,
+> not current acceptance. Historical command paths may refer to the original layout.
+> See the [current guide](../../portable-projects.md) and [archive index](../README.md).
+
 This page records the original MVP experiment based on master
 f697ffa89f8bf995ac20324bc639dc6ba62e37e0. No renderer or revision implementation
 changed during that original experiment. The later safety follow-up in PR #21

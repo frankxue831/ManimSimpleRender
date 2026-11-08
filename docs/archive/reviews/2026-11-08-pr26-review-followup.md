@@ -1,5 +1,10 @@
 # PR 26 review follow-up
 
+> Historical record. Original path: `docs/reviews/2026-11-08-pr26-review-followup.md`.
+> Findings, commands and validation counts describe the recorded revision and environment,
+> not current acceptance. Historical command paths may refer to the original layout.
+> See the [current guide](../../logging-and-diagnostics.md) and [archive index](../README.md).
+
 This local follow-up evaluates the [Grok-consolidated review comment](https://github.com/frankxue831/ManimSimpleRender/pull/26#issuecomment-6716710451).
 The fetched discussion contained one ordinary comment, no inline threads and
 no submitted reviews. Its reviewed implementation is

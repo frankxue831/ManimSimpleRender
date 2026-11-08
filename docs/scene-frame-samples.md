@@ -1,5 +1,7 @@
 # Caption-linked frame samples
 
+[Documentation index](README.md) | [Agent quick start](agent-quickstart.md)
+
 The optional sampler builds on [caption sidecars](scene-captions.md), not the
 old staged-caption renderer. It reads a completed public production run through
 the caption sidecar's receipt and artifact identities. It never renders source.

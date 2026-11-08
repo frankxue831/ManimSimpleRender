@@ -1,5 +1,10 @@
 # Selected migration onto the public baseline
 
+> Historical record. Original path: `docs/migration-public-baseline.md`.
+> Findings, commands and validation counts describe the recorded revision and environment,
+> not current acceptance. Historical command paths may refer to the original layout.
+> See the [current guide](../../README.md) and [archive index](../README.md).
+
 Base: public `80891ab5969e90ba3b19c4dbaac36f0b04650219` (including PRs #21-23).
 Reference: the isolated `agent-visual-repair-lab/source` candidate descended from
 the old `72c3c9536d5331238413096bf9ae200eb63c9627` history, through fixes 26 and 27.
@@ -23,6 +28,10 @@ boundaries. The archived local handoff records exact file hashes and regression
 results for this migration; repository documentation does not imply publication.
 
 ## Deliberately not migrated
+
+> This list describes the scope at base `80891ab`. The later
+> [local handoff layer](../../agent-handoff.md) added leases and task coordination
+> separately. Consult the [current index](../../README.md) for today's capabilities.
 
 - The old `staged_caption.run/verify` production chain and
   `external_caption_runtime` launch path. They duplicate public scene production
@@ -72,3 +81,44 @@ baseline suite, formatting and architecture guards must pass before delivery.
 Local evidence does not substitute for Linux/Windows CI, a clean dependency
 installation, actual listening, visual/teaching assessment or hostile-filesystem
 testing. No dependency or package-entry-point change is required by this migration.
+
+## Appendix: helper migration notes
+
+These passages were preserved from the helper guides at `fb80059` when PR 27
+replaced migration background with links to this archive. Their exclusions refer
+to that migration, not a blanket statement of current capabilities.
+
+### Audio migration scope
+
+This service selectively reworks useful contracts from the earlier
+`app/render/voice_bridge.py` and `voice_tools/{prepare_from_srt,preflight,make_preview}.py`:
+explicit mapping, strict WAV completeness and timing checks, frozen identities,
+new output directories, bounded subprocesses, and honest review-required
+results. It does not import or copy that whole pipeline.
+
+Not migrated: the old `staged_caption` dependency, Qt dialogs/workers, external
+runtime launcher, job recovery UI, automatic TTS, SRT-index mapping, clip
+selection, subtitle embedding, and video re-encoding. Captions remain a
+separate sidecar; the audio preview contains only the original video and an
+audio track. No storyboard or silent-revision integration is implied.
+
+### Caption migration scope
+
+The small Qt-free author-event and SRT primitives were selected from the local
+prototype's `app/render/caption_events.py` and `subtitle_draft.py`, with their unit
+tests. Validation and coverage calculations now share the same draft contract.
+The production adapter is new and targets the public successful-run layout.
+
+The prototype's `staged_caption` renderer, GUI integration, external caption
+runtime, caption preview renderer, automatic text-to-scene editing and broad
+cross-video caption acceptance were deliberately not migrated. There is one
+production rendering path, with these annotations attached afterward.
+
+### Agent migration scope
+
+The experimental `app/render/staged_caption.py` supplied the design ideas for
+JSONL events, an early run token, structured invocation fields, explicit
+terminal rules and attempt-associated diagnostics. Its old render/staging/copy
+pipeline, caption-specific command graph, raw log excerpt emission, voice
+workflow and verify command were not migrated here. Public scene production
+and reinspection remain the execution and media-checking implementation.
