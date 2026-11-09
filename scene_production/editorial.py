@@ -7,8 +7,10 @@ comprehension, or render completion. Trusted local files; no concurrent writers.
 import argparse
 import json
 import math
+import os
 from pathlib import Path
 import re
+import tempfile
 
 from . import digest, pairs
 
@@ -152,7 +154,7 @@ def record_review(video, assessment, output, previous=None, addresses=()):
         prior_entry = _entry(previous)
         prior_data = _load(previous)
         valid = {item["id"] for item in prior_data["assessment"]["findings"]}
-        if not addresses or len(set(addresses)) != len(addresses) or not set(addresses) <= valid:
+        if len(set(addresses)) != len(addresses) or not set(addresses) <= valid:
             raise ValueError("addresses must name distinct findings in previous review")
         if not _unchanged(prior_entry):
             raise ValueError("previous review changed during recording")
@@ -168,9 +170,30 @@ def record_review(video, assessment, output, previous=None, addresses=()):
     }
     if not all(_unchanged(entry) for entry in [video_entry, *evidence]):
         raise ValueError("artifact changed during recording")
-    with Path(output).open("x", encoding="utf-8") as handle:
-        json.dump(result, handle, ensure_ascii=False, indent=2, allow_nan=False)
-        handle.write("\n")
+    payload = (json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode(
+        "utf-8"
+    )
+    if len(payload) > 4 * 1024 * 1024:
+        raise ValueError("review exceeds 4 MiB")
+    target = Path(output)
+    descriptor, temporary = tempfile.mkstemp(prefix=".editorial-", dir=target.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+        os.link(temporary, target)
+    except BaseException as exc:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            exc.add_note(f"temporary cleanup failed: {temporary}")
+        raise
+    try:
+        os.unlink(temporary)
+    except OSError:
+        return dict(
+            result,
+            publication_warning={"code": "temporary_cleanup_failed", "temporary_path": temporary},
+        )
     return result
 
 
@@ -225,7 +248,8 @@ def main(argv=None):
         else:
             result = compare(args.review, args.candidate)
     except (OSError, ValueError, TypeError, KeyError) as exc:
-        parser.exit(2, f"editorial review failed: {exc}\n")
+        notes = "".join(f"{note}\n" for note in getattr(exc, "__notes__", ()))
+        parser.exit(2, f"editorial review failed: {exc}\n{notes}")
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from scene_production import editorial
 
@@ -96,6 +97,49 @@ class EditorialReviewTests(unittest.TestCase):
         self.frame.write_bytes(b"changed")
         self.assertFalse(editorial.compare(review, self.video)["evidence"][0]["unchanged"])
 
+    def test_cleanup_failure_after_publication_reports_success_with_warning(self):
+        output = self.root / "review.json"
+        with patch("os.unlink", side_effect=PermissionError("cleanup denied")):
+            result = editorial.record_review(self.video, self.assessment, output)
+        self.assertTrue(output.is_file())
+        self.assertTrue(editorial.compare(output, self.video)["assessment_current"])
+        self.assertEqual(result["publication_warning"]["code"], "temporary_cleanup_failed")
+        self.assertTrue(Path(result["publication_warning"]["temporary_path"]).exists())
+
+    def test_cleanup_failure_does_not_hide_publication_error(self):
+        output = self.root / "review.json"
+        with patch("os.link", side_effect=OSError("publication failed")):
+            with patch("os.unlink", side_effect=PermissionError("cleanup denied")):
+                with self.assertRaisesRegex(OSError, "publication failed") as error:
+                    editorial.record_review(self.video, self.assessment, output)
+        self.assertFalse(output.exists())
+        self.assertTrue(any("cleanup" in note for note in error.exception.__notes__))
+
+    def test_publication_failure_leaves_no_review_or_temporary_files(self):
+        output = self.root / "review.json"
+        before = set(self.root.iterdir())
+        with patch("os.link", side_effect=OSError("simulated failure")):
+            with self.assertRaises(OSError):
+                editorial.record_review(self.video, self.assessment, output)
+        self.assertEqual(set(self.root.iterdir()), before)
+
+    def test_invalid_unicode_does_not_create_a_partial_review(self):
+        output = self.root / "invalid-unicode.json"
+        with self.assertRaises(UnicodeEncodeError):
+            editorial.record_review(self.video, dict(self.assessment, reviewer="\ud800"), output)
+        self.assertFalse(output.exists())
+
+    def test_oversized_review_is_rejected_before_creating_output(self):
+        text = "😀" * 4000
+        findings = [
+            {"id": f"F{i}", "observed": text, "acceptance_question": text, "section": text}
+            for i in range(100)
+        ]
+        output = self.root / "oversized.json"
+        with self.assertRaisesRegex(ValueError, "exceeds 4 MiB"):
+            editorial.record_review(self.video, dict(self.assessment, findings=findings), output)
+        self.assertFalse(output.exists())
+
     def test_unrepresentable_time_is_rejected(self):
         finding = dict(self.assessment["findings"][0], time_seconds=10**1000)
         with self.assertRaises(ValueError):
@@ -107,6 +151,19 @@ class EditorialReviewTests(unittest.TestCase):
         assessment = dict(self.assessment, decision="approved")
         with self.assertRaises(ValueError):
             editorial.record_review(self.video, assessment, self.root / "review.json")
+
+    def test_candidate_can_link_a_prior_review_with_no_findings(self):
+        for decision in ("approved", "needs_review"):
+            with self.subTest(decision=decision):
+                prior = self.root / f"{decision}-prior.json"
+                candidate = self.root / f"{decision}-candidate.json"
+                assessment = dict(self.assessment, decision=decision, findings=[])
+                editorial.record_review(self.video, assessment, prior)
+                editorial.record_review(self.video, assessment, candidate, previous=prior)
+                result = editorial.compare(candidate, self.video)
+                self.assertEqual(result["previous"]["addressed_findings"], [])
+                self.assertEqual(result["previous"]["review"]["sha256"], editorial.digest(prior))
+                self.assertTrue(result["previous_review_unchanged"])
 
     def test_changed_prior_review_is_detected(self):
         first, second = self.root / "first.json", self.root / "second.json"

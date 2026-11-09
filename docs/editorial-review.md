@@ -74,11 +74,18 @@ python -m scene_production.editorial compare --review /absolute/review-2.json \
   --candidate /absolute/candidate.mp4
 ```
 
-The new record links the previous review's hash and named finding IDs. This is
+The new record links the previous review's hash and named finding IDs. Omit
+`--addresses` to link a previous review without naming findings, including a
+prior approval or finding-free assessment. Naming a finding is
 an author assertion that the candidate addresses those findings, not proof they
 are resolved. `compare` exposes the link and reports if the previous record is
-missing or changed. Records are written exclusively: keep earlier files and
-artifacts rather than replacing them. The helper does not follow or verify an
+missing or changed. Records are published exclusively through a temporary file
+and a hard link; the output filesystem must support hard links. Keep earlier
+files and artifacts rather than replacing them. If publication succeeds but
+temporary-file cleanup fails, `record` succeeds with a `publication_warning`
+containing the temporary path; the warning is in the command result, not the
+record. On publication failure, a cleanup failure is reported separately. The
+helper does not follow or verify an
 entire history chain, prevent a user from editing records, or provide signatures.
 The caller must retain the record and inspect the reported integrity flags.
 Avoid concurrent modifications; hashing is not an authentication or locking
