@@ -28,6 +28,15 @@ markers. Dependencies reference earlier sections. These are author-maintained
 mappings, not automatic semantic or dependency inference. The timeline remains
 inspection configuration, not an animation language.
 
+Every segment must include `captions` as a list of nonblank strings. Use
+`"captions": []` when the author declares no key captions for that section,
+including a caption-free scene; do not invent placeholder captions. Empty and
+nonempty caption lists may coexist in a manifest. The declaration is retained
+in the snapshot's manifest copy and returned unchanged by `locate`. It is not
+evidence that rendered text is absent, present or legible. `objects` must still
+be a nonempty list, brief `sources` and `pitfalls` must remain nonempty, and
+dependency, source and timeline guards are unchanged.
+
 Minimal manifest shape (one section):
 
 ```json
@@ -90,10 +99,16 @@ No performance or cost saving is promised without a fair measured baseline.
 
 ## Optional observed frame evidence
 
-The local render evidence used macOS arm64, Python 3.13.0 and Manim 0.20.1.
-Repository CI covers headless/installation checks on Python 3.12/3.13 and a
-native traced-failure subprocess on Ubuntu. That is not visual/font acceptance
-across Windows/Linux or other Manim/OpenGL versions.
+Earlier local render evidence used macOS arm64, Python 3.13.0 and Manim 0.20.1.
+The current native frame recorder requires **Manim 0.22.1**, matching the render
+extras, because it hooks private writer APIs. The isolated render process checks
+its imported Manim version before executing scene code or installing hooks. A
+mismatch fails with the detected version and a same-interpreter install hint in
+`render.log`; it does not install or retry anything. Ordinary untraced renders
+are not subject to this version guard.
+Repository CI covers headless/installation checks on Python 3.12/3.13 and native
+traced renders on Ubuntu. That is not visual/font acceptance across Windows/Linux
+or other Manim/OpenGL versions.
 
 For a full ordinary Cairo Scene render, `scene-production ... --record-scene-frames`
 records SHA-256 hashes of the exact uint8 RGBA arrays passed to Manim's writer,

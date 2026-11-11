@@ -10,6 +10,8 @@ import math
 from pathlib import PurePosixPath, PureWindowsPath
 import re
 
+from app.render.cleanup import RenderCleanupState
+
 
 @dataclass(frozen=True)
 class Completion:
@@ -105,6 +107,9 @@ def read_completion(
 
     Additional diagnostic fields are not completion/liveness evidence. The
     returned manifest is the producer's claim, not a fresh artifact recheck.
+    Legacy terminals without cleanup state remain readable here. This reader
+    does not grant permission to reuse a render slot; scheduling requires explicit
+    safe render cleanup evidence, including for failed operations.
     No filesystem access or subprocess work occurs in this function.
     """
     if expected_operation not in ("describe", "render", "inspect"):
@@ -155,6 +160,13 @@ def read_completion(
             "process_cleanup_verified" in item
             and type(item["process_cleanup_verified"]) is not bool
         )
+        or (
+            "render_cleanup_state" in item
+            and (
+                type(item["render_cleanup_state"]) is not str
+                or item["render_cleanup_state"] not in {state.value for state in RenderCleanupState}
+            )
+        )
         for item in events
     ):
         return Completion("unknown", "invalid_protocol_fields")
@@ -180,6 +192,22 @@ def read_completion(
         return Completion("unknown", "operation_mismatch", token)
     if expected_operation == "describe" and started is not None:
         return Completion("unknown", "invalid_event_sequence", token)
+    cleanup = terminal.get("render_cleanup_state")
+    if (cleanup == "unknown" and terminal.get("process_cleanup_verified") is True) or (
+        cleanup in ("not_started", "complete") and terminal.get("process_cleanup_verified") is False
+    ):
+        return Completion("unknown", "conflicting_cleanup_evidence", token)
+    if status in ("succeeded", "failed") and (
+        cleanup == "unknown"
+        or terminal.get("process_cleanup_verified") is False
+        or (
+            status == "succeeded"
+            and expected_operation == "render"
+            and cleanup is not None
+            and cleanup != "complete"
+        )
+    ):
+        return Completion("unknown", "conflicting_cleanup_evidence", token)
     if status == "succeeded" and returncode == 0:
         if "error" in terminal or "process_cleanup_verified" in terminal:
             return Completion("unknown", "conflicting_success", token)
@@ -214,6 +242,14 @@ def read_completion(
             return Completion("failed", "terminal_failed", token, terminal)
     if status == "unknown" and (
         (returncode == 3 and error_code in ("persistence_failed", "transport_failed"))
+        or (
+            returncode == 3
+            and error_code == "render_cleanup_unverified"
+            and expected_operation == "render"
+            and started is not None
+            and cleanup == "unknown"
+            and terminal.get("process_cleanup_verified") is False
+        )
         or (
             returncode in (130, 143)
             and error_code == "interrupted"

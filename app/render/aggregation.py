@@ -23,6 +23,7 @@ class RenderSummary:
     failed: int = 0
     cancelled: int = 0
     manim_not_found: int = 0
+    cleanup_unknown: bool = False
 
     _FIELD_BY_OUTCOME = {
         JobOutcome.SUCCESS: "succeeded",
@@ -42,6 +43,11 @@ class RenderSummary:
         return self.succeeded + self.failed + self.cancelled + self.manim_not_found
 
     def terminal_message(self):
+        if self.cleanup_unknown:
+            return (
+                "Batch halted: render cleanup is unverified; "
+                "further renders are blocked pending investigation."
+            )
         if self.total == 0:
             return "No render jobs were scheduled."
         # Lead with the actionable cause when manim could not start, instead of

@@ -19,6 +19,7 @@ from pathlib import Path
 
 from PyQt5.QtCore import QThread, Qt, pyqtSignal
 
+from app.render.cleanup import RenderCleanupState, cleanup_state, result_cleanup_state
 from app.render.aggregation import JobOutcome, RenderSummary
 from app.render.command_builder import build_command, display_command
 from app.render.implementation import write_implementation_manifest
@@ -88,6 +89,7 @@ class RenderWorker(QThread):
         total = len(self._jobs)
         recorded = set()
         active_index = None
+        render_state = RenderCleanupState.NOT_STARTED
         log_file = None
         buffer = []
         lock = threading.RLock()
@@ -179,17 +181,27 @@ class RenderWorker(QThread):
                 recorded.remove(index)
                 raise
             started = job_starts.get(index)
-            event(
-                "job_finished",
-                job_index=index + 1,
-                scene=job.scene_class,
-                outcome=outcome.value,
-                return_code=return_code,
-                started=started is not None,
-                duration_ms=(
-                    round((time.monotonic() - started) * 1000, 3) if started is not None else None
-                ),
-            )
+            try:
+                event(
+                    "job_finished",
+                    job_index=index + 1,
+                    scene=job.scene_class,
+                    outcome=outcome.value,
+                    return_code=return_code,
+                    started=started is not None,
+                    render_cleanup_state=(
+                        render_state.value
+                        if started is not None
+                        else RenderCleanupState.NOT_STARTED.value
+                    ),
+                    duration_ms=(
+                        round((time.monotonic() - started) * 1000, 3)
+                        if started is not None
+                        else None
+                    ),
+                )
+            except BaseException:
+                pass
             self.job_result.emit(job, outcome, return_code)
 
         try:
@@ -240,14 +252,32 @@ class RenderWorker(QThread):
                     f"Rendering {completed}/{total}: {job.scene_class} "
                     f"from {os.path.basename(job.file_path)}..."
                 )
-                result = self._runner.run_job(job, command, self._cancel, emit_line)
+                render_state = RenderCleanupState.UNKNOWN
+                try:
+                    result = self._runner.run_job(job, command, self._cancel, emit_line)
+                except BaseException as runner_error:
+                    render_state = cleanup_state(
+                        getattr(runner_error, "render_cleanup_state", None)
+                    )
+                    raise
+                render_state = result_cleanup_state(result)
+                summary.cleanup_unknown |= render_state == RenderCleanupState.UNKNOWN
                 if result.diagnostic:
                     emit_line(result.diagnostic)
-                record(index, result.outcome, result.return_code)
+                record(
+                    index,
+                    JobOutcome.FAILED if summary.cleanup_unknown else result.outcome,
+                    result.return_code,
+                )
+                if summary.cleanup_unknown:
+                    for skipped_index in range(index + 1, total):
+                        record(skipped_index, JobOutcome.CANCELLED, None)
+                    break
                 flush()  # make this job's output visible before the next starts
                 self.progress.emit(completed, total)  # after the job actually finished
             flush()
         except BaseException as exc:
+            summary.cleanup_unknown |= render_state == RenderCleanupState.UNKNOWN
             if active_index is not None:
                 record(active_index, JobOutcome.FAILED, None)
             for unrecorded_index in range(total):
@@ -273,6 +303,7 @@ class RenderWorker(QThread):
                     failed=summary.failed,
                     cancelled=summary.cancelled,
                     manim_not_found=summary.manim_not_found,
+                    cleanup_unknown=summary.cleanup_unknown,
                     cancellation_requested=self._cancel.is_set(),
                 )
                 flush()

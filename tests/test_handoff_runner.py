@@ -17,7 +17,8 @@ class RunnerProtocolTests(unittest.TestCase):
                     protocol_version=1,
                     event="started",
                     status="running",
-                    run_token="token",
+                    run_token="a" * 32,
+                    retry_safe=False,
                     operation="render",
                     attempt_dir=str(root),
                 ),
@@ -26,7 +27,10 @@ class RunnerProtocolTests(unittest.TestCase):
                     event="terminal",
                     status="failed",
                     exit_code=1,
-                    run_token="token",
+                    error={"code": "operation_failed"},
+                    render_cleanup_state="complete",
+                    run_token="a" * 32,
+                    retry_safe=False,
                     operation="render",
                 ),
             ]
@@ -34,7 +38,11 @@ class RunnerProtocolTests(unittest.TestCase):
             (root / "events.jsonl").write_bytes(data)
             (root / "attempt.json").write_text(json.dumps(events[1]))
             self.assertEqual(verify_result(root, data, 1), "failed")
-            for invalid in (data[:-1], data + data, data.replace(b'"token"', b'"other"', 1)):
+            for invalid in (
+                data[:-1],
+                data + data,
+                data.replace(b'"' + b"a" * 32 + b'"', b'"other"', 1),
+            ):
                 with self.assertRaises(ValueError):
                     verify_result(root, invalid, 1)
             with self.assertRaises(ValueError):
@@ -119,9 +127,10 @@ if mode == 'sleep':
     import time
     time.sleep(30)
 started = dict(protocol_version=1, event='started', status='running',
-               run_token='abc', operation='render', attempt_dir=str(root))
+               run_token='a'*32, retry_safe=False, operation='render', attempt_dir=str(root))
 terminal = dict(protocol_version=1, event='terminal', status='failed',
-                exit_code=1, run_token='abc', operation='render',
+                exit_code=1, render_cleanup_state='complete', run_token='a'*32,
+                retry_safe=False, operation='render',
                 error={'code': 'operation_failed', 'private': 'do-not-copy'},
                 diagnostics={'stage': 'decode', 'private': 'do-not-copy',
                              'failure_reason': 'do-not-copy-private-reason'})
@@ -131,12 +140,15 @@ if mode in ('success', 'tamper'):
     run = root / 'production' / 'scene-test'; run.mkdir(parents=True)
     for name in ('source.py', 'timeline.json', 'video.mp4', 'frame.png'):
         (run / name).write_bytes(b'test artifact')
-    receipt = dict(status='success', run_dir=str(run), video=str(run/'video.mp4'),
+    receipt = dict(status='success', render_cleanup_state='complete',
+                   run_dir=str(run), video=str(run/'video.mp4'),
                    frames=[dict(path=str(run/'frame.png'), sha256=digest(run/'frame.png'))])
     for name, file in [('source','source.py'), ('timeline','timeline.json'), ('video','video.mp4')]:
         receipt[name+'_sha256'] = digest(run/file)
     (run/'result.json').write_text(json.dumps(receipt))
-    terminal.update(status='succeeded', exit_code=0,
+    terminal.pop('error', None)
+    terminal.update(status='succeeded', exit_code=0, semantic_acceptance=False,
+                    verification_scope='retained_artifact_bytes',
                     artifacts=agent._verified_result(receipt, root, 'render'))
     if mode == 'tamper': (run/'video.mp4').write_bytes(b'changed')
 if mode == 'mismatch': terminal['run_token'] = 'foreign'

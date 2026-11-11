@@ -25,6 +25,7 @@ from PyQt5.QtCore import Qt  # noqa: E402
 from PyQt5.QtWidgets import QApplication  # noqa: E402
 
 from app.render.aggregation import JobOutcome  # noqa: E402
+from app.render.cleanup import RenderCleanupState  # noqa: E402
 from app.render.jobs import RenderJob  # noqa: E402
 from app.render.runner import JobResult  # noqa: E402
 from app.render.worker import RenderWorker  # noqa: E402
@@ -48,7 +49,12 @@ class FakeRunner:
         if self.cancel_after is not None and len(self.calls) >= self.cancel_after:
             cancel_event.set()
         code = 0 if outcome == JobOutcome.SUCCESS else 1
-        return JobResult(job=job, return_code=code, outcome=outcome)
+        return JobResult(
+            job=job,
+            return_code=code,
+            outcome=outcome,
+            render_cleanup_state=RenderCleanupState.COMPLETE,
+        )
 
 
 class BaseExceptionRunner:
@@ -66,6 +72,40 @@ def _worker(jobs, runner):
 
 
 class RenderWorkerRunTests(unittest.TestCase):
+    def test_unknown_and_contradictory_no_start_stop_batch(self):
+        cases = (
+            (JobOutcome.SUCCESS, 0, "unknown", True),
+            (JobOutcome.SUCCESS, 0, "not_started", True),
+            (JobOutcome.SUCCESS, None, "not_started", True),
+            (JobOutcome.FAILED, 1, "not_started", True),
+            (JobOutcome.CANCELLED, None, "not_started", True),
+            (JobOutcome.FAILED, None, "not_started", False),
+            (JobOutcome.MANIM_NOT_FOUND, None, "not_started", False),
+            (JobOutcome.FAILED, None, "complete", False),
+        )
+        for outcome, code, state, blocked in cases:
+            with self.subTest(outcome=outcome, code=code, state=state):
+                jobs = [RenderJob("a.py", "A"), RenderJob("b.py", "B")]
+                runner = mock.Mock()
+                runner.run_job.return_value = JobResult(
+                    jobs[0], code, outcome, render_cleanup_state=state
+                )
+                worker = _worker(jobs, runner)
+                summaries = []
+                worker.finished_summary.connect(summaries.append)
+                with (
+                    mock.patch("subprocess.Popen", side_effect=AssertionError("no child")),
+                    mock.patch("subprocess.run", side_effect=AssertionError("no command")),
+                    mock.patch("os.kill", side_effect=AssertionError("no signal")),
+                    mock.patch("os.killpg", side_effect=AssertionError("no signal"), create=True),
+                ):
+                    worker.run()
+                self.assertEqual(runner.run_job.call_count, 1 if blocked else 2)
+                self.assertEqual(summaries[0].cleanup_unknown, blocked)
+                self.assertEqual(summaries[0].total, 2)
+                if blocked:
+                    self.assertEqual((summaries[0].failed, summaries[0].cancelled), (1, 1))
+
     def test_baseexception_is_fenced_and_every_job_is_recorded_once(self):
         jobs = [RenderJob("a.py", "A"), RenderJob("b.py", "B"), RenderJob("c.py", "C")]
         worker = _worker(jobs, BaseExceptionRunner())
@@ -119,7 +159,12 @@ class RenderWorkerRunTests(unittest.TestCase):
         class BadLogRunner:
             def run_job(self, job, command, cancel_event, on_log):
                 on_log(None)
-                return JobResult(job=job, return_code=0, outcome=JobOutcome.SUCCESS)
+                return JobResult(
+                    job=job,
+                    return_code=0,
+                    outcome=JobOutcome.SUCCESS,
+                    render_cleanup_state=RenderCleanupState.COMPLETE,
+                )
 
         class NoDiskLogWorker(RenderWorker):
             def _open_log_file(self):
@@ -227,7 +272,12 @@ class RenderWorkerRunTests(unittest.TestCase):
         class RecordingRunner:
             def run_job(self, job, command, cancel_event, on_log):
                 events.append("run_job")
-                return JobResult(job=job, return_code=0, outcome=JobOutcome.SUCCESS)
+                return JobResult(
+                    job=job,
+                    return_code=0,
+                    outcome=JobOutcome.SUCCESS,
+                    render_cleanup_state=RenderCleanupState.COMPLETE,
+                )
 
         worker = _worker([RenderJob("a.py", "A")], RecordingRunner())
         worker.progress.connect(lambda c, t: events.append(f"progress {c}/{t}"))
@@ -349,7 +399,12 @@ class WorkerLogAndResultTests(unittest.TestCase):
                 self.assertTrue(visible.wait(2), "sparse log was held until render completion")
                 with open(paths[0], encoding="utf-8") as handle:
                     self.assertIn("sparse output <Scene>", handle.read())
-                return JobResult(job=job, return_code=0, outcome=JobOutcome.SUCCESS)
+                return JobResult(
+                    job=job,
+                    return_code=0,
+                    outcome=JobOutcome.SUCCESS,
+                    render_cleanup_state=RenderCleanupState.COMPLETE,
+                )
 
         with tempfile.TemporaryDirectory() as out:
             worker = RenderWorker([RenderJob("a.py", "A")], "-ql", "", out, runner=SparseRunner())
@@ -453,7 +508,12 @@ class WorkerLogAndResultTests(unittest.TestCase):
             def run_job(self, job, command, cancel_event, on_log):
                 for i in range(100):
                     on_log(f"line {i}")
-                return JobResult(job=job, return_code=0, outcome=JobOutcome.SUCCESS)
+                return JobResult(
+                    job=job,
+                    return_code=0,
+                    outcome=JobOutcome.SUCCESS,
+                    render_cleanup_state=RenderCleanupState.COMPLETE,
+                )
 
         worker = _worker([RenderJob("a.py", "A")], ChattyRunner())
         signals = []

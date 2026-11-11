@@ -352,3 +352,88 @@ Recovery tests cover audit/CAS rollback and races, stale launch rejection,
 same-boot and unavailable-evidence refusal, injected host/boot transitions,
 idempotent audit queries, and manual lease renewal across CLI processes.
 Fake subprocess tests are transport tests, not real-video quality acceptance.
+
+### Cleanup uncertainty at the scheduling boundary
+
+The scheduler requires explicit `render_cleanup_state=not_started` or `complete`
+for failed/1 render terminals, and `complete` plus all existing byte checks for
+succeeded/0. Legacy render terminals without this evidence remain readable by the
+pure protocol reader but are classified unknown by the scheduler, with
+`cleanup_evidence_missing`. They gain no artifacts/verification claim and are not
+retroactively rewritten as safe. Contradictory or invalid protocol also fails
+closed.
+
+A correlated cleanup-unknown terminal is validated against the observed agent
+exit, attempt state and journal and retained as unknown, not treated as transport
+corruption. The wrapper can have exited normally while the render session remains
+unverified. Read-only reconciliation preserves unknown. The render slot remains
+held, and dependents remain blocked. Existing fenced finish/eligibility rules,
+launch gates and audited abandonment proofs are unchanged; wrapper exit, missing
+PIDs, operator assertions and same-boot scans are not new release proofs.
+
+### Reproducible real-Manim handoff regression
+
+The public two-second fixture in `tests/support/real_handoff_scene.py` uses only
+geometric objects. With the existing render prerequisites installed, run from the
+trusted checkout root (the chosen output directory must not already exist):
+
+```sh
+MSR_HANDOFF_EVIDENCE_DIR=/existing/parent/new-handoff-fixture \
+  python -m unittest -v tests.e2e.test_real_handoff
+```
+
+This is deterministic local **multiprocess integration**, not independent-agent
+review, human review or semantic acceptance. Authorization strings are explicitly
+invented fixture data, not actual user quotes or permission for other work.
+
+The regression creates draft -> render -> review tasks in one ledger. A consumer
+process ACKs both created and ready events, then exits normally before claiming.
+Fresh CLI processes verify an empty inbox, no attempt, and discovery via the durable
+eligible-task scan. This tests the ACK-before-claim interruption gap, not an OS crash
+or recovery of already-running/unknown work.
+
+Two local contender processes rendezvous at a test-only pipe barrier, then each
+invokes the ordinary handoff CLI once. The harness requires observed invocation
+overlap, one successful process and one rejected claim, one render attempt/output,
+and matching started/terminal tokens, observed exit, durable state, receipt and
+current artifact hashes. The winner is deliberately unspecified. The barrier does
+not make SQLite transactions simultaneous or install a scheduler/consumer daemon.
+Inputs are also compared with their prepared fixture hashes; this caller check
+does not add content-bound authorization to the ledger.
+
+`summary.json` reports API/fixture success and `decision: needs_review`. The manual
+review task remains pending and eligible, without a claim. Nobody has assessed the
+pixels, animation meaning or audience understanding. Frame count/duration checks
+and retained PNGs are not a visual PASS or permission to publish.
+
+Without the environment variable, successful temporary evidence is removed;
+failed evidence is retained and its location printed. An explicit directory retains
+both successes and failures and is never reused. Preserve failures and investigate;
+there is no automatic render retry, database repair or unknown-state resolution.
+Timeout cleanup is bounded and best-effort, not proof all descendants stopped.
+The per-PR `readme-quickstart` job requires the real dependencies, bounds this step
+to three minutes and retains only public fixture inputs, command/protocol/exit logs,
+media and summaries for seven days, including on failure. It excludes the ledger
+database. Other test jobs skip this regression when render tools are absent.
+
+## Optional FPS in render payloads
+
+A render payload can request 1080p30 with `"quality": "qh", "fps": 30` alongside
+its existing scene and timeline fields. FPS is optional and must be a JSON integer
+from 1 to 240; booleans, floats and strings are rejected. Missing `fps` and
+`"fps": null` both leave the existing preset/argv unchanged. The ledger retains
+the original payload, including the distinction between missing and null, through
+claim and recovery. Tasks requesting 30 and 60 retain their distinct intent.
+No historical record migration or request-identity change is introduced.
+
+The runner validates FPS before acquiring a claim, changing a fence, creating an
+attempt or launching the fixed agent command. Generic ledger storage is not a
+render validator: an invalid stored render payload cannot launch. No arbitrary
+extra argv is allowed. Authorization, execution identity and unknown-cleanup
+blocking rules are unchanged.
+
+An explicit valid FPS becomes `--fps INTEGER` and conditional `requested_fps`
+evidence in agent records and the production receipt. This is requested intent,
+not a CFR, exact-duration or delivery guarantee. Source/config overrides may
+change the observed rate; probe and trace evidence remain authoritative. Existing
+downstream helper limits are independent and unchanged.

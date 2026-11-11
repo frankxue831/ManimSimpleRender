@@ -20,6 +20,7 @@ license = { file = "LICENSE" }
 dependencies = []
 
 [project.optional-dependencies]
+review = ["Pillow>=11"]
 dev = ["black==26.5.1", "flake8==7.3.0"]
 # `explainer verify` (citation gate + codegen check) only parses YAML and reads
 # files; it never imports manim, so this extra installs no render stack.

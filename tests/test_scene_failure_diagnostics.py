@@ -7,6 +7,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from app.render.cleanup import RenderCleanupState
+
 from app.render.aggregation import JobOutcome
 from app.render.runner import JobResult
 from scene_production import render
@@ -18,7 +20,9 @@ class FontFailureDiagnosticsTests(unittest.TestCase):
         class Failed:
             def run_job(self, job, command, event, log, env):
                 log(output)
-                return JobResult(job, 1, JobOutcome.FAILED)
+                return JobResult(
+                    job, 1, JobOutcome.FAILED, render_cleanup_state=RenderCleanupState.COMPLETE
+                )
 
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)

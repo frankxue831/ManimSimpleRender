@@ -220,3 +220,52 @@ QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests
 python -m black --check scene_production/agent.py tests/test_production_agent.py
 python -m flake8 scene_production/agent.py tests/test_production_agent.py
 ```
+
+### Render-session cleanup evidence
+
+Render terminals and new production receipts include `render_cleanup_state`:
+`not_started`, `complete`, or `unknown`. This is independent of operation success.
+`not_started` records positive no-acquisition control flow for this invocation.
+`complete` records a reaped leader, absent captured POSIX group or an empty owned
+Windows Job Object observed before its handle closes, and no live output reader.
+No deferred setup step can resume execution after that observation. An invalid or
+missing core result state is unknown. A kill request, return code, wrapper exit,
+reader EOF, timeout label, or diagnostic string alone does not prove cleanup.
+
+These observations cover the supervised session of trusted scene code, not
+arbitrary detached/escaped descendants, external side effects, media-helper
+processes, or semantic acceptance. POSIX group visibility (including possible
+zombies), permission failures and unowned Windows fallback trees can remain
+unknown conservatively. This change does not add containment or recovery proofs.
+
+Unverified render cleanup produces one correlated `unknown` terminal with exit 3,
+`error.code=render_cleanup_unverified`, `render_cleanup_state=unknown`, and
+`process_cleanup_verified=false`. It has no success artifacts and never permits
+an automatic retry. The existing timeout/cancel/failure reason can remain in safe
+diagnostics. Known no-spawn and completely cleaned failures remain failed/1.
+Success requires complete cleanup plus the existing artifact/hash checks.
+Interruption and persistence/transport failure still produce unknown lifecycle
+outcomes; rendering completion does not make interrupted protocol evidence safe.
+The broad `process_cleanup_verified=true` flag is never emitted.
+
+The pure completion reader retains legacy terminals without the additive field
+for protocol compatibility. It does not grant permission to reuse a render slot.
+It rejects contradictory safe outcomes with unknown cleanup or a false cleanup
+verification flag. Inspect/describe do not inherit a source render's state.
+A production receipt, including one with this field, is never a liveness signal.
+
+## Optional requested frame rate
+
+A 1080p30 render request appends `--quality qh --fps 30` to the agent's `render`
+command. `describe` advertises optional `fps` with the integer range 1–240.
+`inspect` has no FPS option. Invalid integer/range tokens are rejected with the
+existing argument-error JSONL and exit 2 before creating an attempt or emitting
+`started`. Decimal, exponent, nonfinite and boolean spellings are invalid.
+
+Omitting FPS preserves the preset and existing records. An explicit valid rate
+adds `requested_fps` to started/terminal events and their persisted attempt/journal
+records. The production receipt records requested intent and the prepared command;
+a prepared command is not evidence that spawn occurred. Tokens, completion,
+cleanup and recovery rules are unchanged. Source/config overrides can produce a
+different observed rate: inspect probe/trace evidence. This is not a CFR,
+exact-duration or delivery guarantee, and downstream helper limits are unchanged.

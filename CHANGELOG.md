@@ -35,6 +35,26 @@ All notable changes to this project are listed here. The format follows
   and `timestamp_notice`; strict output-key consumers must allow these additive
   fields. Preparation time does not establish review or publication time (#37).
 
+### Changed: render cleanup evidence and upgrades
+
+- Render results now carry `render_cleanup_state` independently of success or
+  failure: `not_started`, `complete`, or conservative `unknown` (#35). Custom
+  runners and `JobResult` producers must provide explicit, observed evidence;
+  the default or a missing/invalid field is `unknown`. Success requires
+  `complete`; `not_started` must not accompany success or a render return code.
+- Before upgrading schedulers/readers, stop new dispatches, drain older workers,
+  and reconcile their outstanding attempts using the existing handoff workflow.
+  Upgrade custom runners and workers together before resuming dispatch. Legacy
+  records remain readable, but missing cleanup evidence cannot release a render
+  slot or authorize another render. An unknown result holds its slot, halts GUI
+  batches and blocks Explainer/concept artifact publication.
+- Keep uncertain attempts and their logs for operator investigation. Do not
+  backfill `complete` from an exit code, successful media, elapsed time, a PID
+  disappearing or a GUI restart. Reconciliation is not an unsafe release or an
+  automatic retry. Use only the existing supported, audited abandonment proofs
+  in the [handoff guide](docs/agent-handoff.md#audited-abandonment-of-an-unknown-local-render);
+  no same-boot force-release or recovery shortcut is added.
+
 ### Fixed
 
 - Generated diagram motion validates actor/path start consistency and preserves

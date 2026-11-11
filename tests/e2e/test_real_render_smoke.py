@@ -31,6 +31,7 @@ _FFMPEG_MISSING = shutil.which("ffmpeg") is None
 
 _SMOKE_SCENE = (
     "from manim import *\n"
+    "config.notify_outdated_version = False\n"
     "\n"
     "class SmokeScene(Scene):\n"
     "    def construct(self):\n"
@@ -52,6 +53,7 @@ class RealRenderSmokeTests(unittest.TestCase):
             result = RenderRunner().run_job(jobs[0], cmd, cancel_event=None, on_log=logs.append)
             self.assertEqual(result.outcome, JobOutcome.SUCCESS, "\n".join(logs[-15:]))
             self.assertEqual(result.return_code, 0)
+            self.assertEqual(result.render_cleanup_state, "complete")
             path = output_assertions.media_output_path(out, "smoke.py", "SmokeScene", "480p15")
             output_assertions.assert_nonempty_video(self, path)
 
@@ -72,9 +74,12 @@ class VoiceoverRenderSmokeTests(unittest.TestCase):
             import math
             import struct
             import wave
-            from manim import Square
+            from manim import Square, config
             from manim_voiceover import VoiceoverScene
             from manim_voiceover.services.base import SpeechService
+
+            # The compatibility fixture is local-only, including after rendering.
+            config.notify_outdated_version = False
 
             class LocalSpeech(SpeechService):
                 def generate_from_text(self, text, cache_dir=None, path=None, **kwargs):

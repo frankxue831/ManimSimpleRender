@@ -13,6 +13,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+
+from app.render.cleanup import RenderCleanupState, set_cleanup_state
 from unittest.mock import patch
 
 
@@ -51,6 +53,8 @@ class AgentProtocolTests(unittest.TestCase):
         result = {"status": "success", "run_dir": str(run), "frames": []}
         if "from_run" in kwargs:
             result["operation"] = "reinspect"
+        else:
+            result["render_cleanup_state"] = "complete"
         for name, data in (
             ("source.py", b"source"),
             ("timeline.json", b"{}"),
@@ -191,7 +195,9 @@ class AgentProtocolTests(unittest.TestCase):
         def api(**kwargs):
             print("private-output-secret")
             print("private-error-secret", file=sys.stderr)
-            raise RuntimeError("private-exception-secret")
+            raise set_cleanup_state(
+                RuntimeError("private-exception-secret"), RenderCleanupState.NOT_STARTED
+            )
 
         with patch("scene_production.render", side_effect=api):
             code, events = self.invoke(self.arguments())
@@ -321,7 +327,7 @@ class AgentProtocolTests(unittest.TestCase):
         other = self.root / "old" / "result.json"
         other.parent.mkdir()
         other.write_text('{"stage":"render","error":"old secret"}')
-        error = RuntimeError("secret")
+        error = set_cleanup_state(RuntimeError("secret"), RenderCleanupState.COMPLETE)
         error.receipt_path = str(other)
         with patch("scene_production.render", side_effect=error):
             code, events = self.invoke(self.arguments())
@@ -336,7 +342,7 @@ class AgentProtocolTests(unittest.TestCase):
             receipt = run / "result.json"
             receipt.write_text('{"status":"failed","stage":"render","error":"secret"}')
             (run / "render.log").write_text("ValueError: SCENE_FONT is not installed: secret-font")
-            error = RuntimeError("secret")
+            error = set_cleanup_state(RuntimeError("secret"), RenderCleanupState.COMPLETE)
             error.receipt_path = str(receipt)
             raise error
 
@@ -432,7 +438,7 @@ class AgentProtocolTests(unittest.TestCase):
             check=False,
             timeout=10,
         )
-        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.returncode, 3)
         events = [json.loads(line) for line in result.stdout.splitlines()]
         self.assertEqual([event["event"] for event in events], ["started", "terminal"])
         self.assertNotIn("secret", result.stdout + result.stderr)
@@ -478,7 +484,9 @@ class AgentProtocolTests(unittest.TestCase):
             media = Path(command[command.index("--media_dir") + 1])
             media.mkdir(parents=True)
             (media / "Demo.mp4").write_bytes(b"video")
-            return JobResult(job, 0, JobOutcome.SUCCESS)
+            return JobResult(
+                job, 0, JobOutcome.SUCCESS, render_cleanup_state=RenderCleanupState.COMPLETE
+            )
 
         def tool(command, timeout, *, cwd=None):
             if command[0] == "ffprobe":
@@ -658,7 +666,9 @@ class AgentProtocolTests(unittest.TestCase):
             run.mkdir(parents=True)
             receipt = run / "result.json"
             receipt.write_text('{"status":"failed","stage":"frame_trace","error":"secret"}')
-            error = ValueError("secret trace validation detail")
+            error = set_cleanup_state(
+                ValueError("secret trace validation detail"), RenderCleanupState.COMPLETE
+            )
             error.receipt_path = str(receipt)
             raise error
 

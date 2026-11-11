@@ -83,3 +83,46 @@ decision needing its own brainstorm, not an architecture cleanup).
   without growing private copies.
 - The extraction decision is pre-made; future sessions implement the trigger
   instead of re-debating the architecture.
+
+### Cleanup evidence and consumer blocking
+
+Render operation outcomes are separate from `render_cleanup_state`: `not_started`
+means this invocation did not acquire a render process, `complete` records the
+supervisor's bounded quiescence observations, and `unknown` means those observations
+were not established. Missing or invalid evidence is unknown. Consumers must not
+publish a successful render unless its state is complete.
+
+The desktop batch worker halts on unknown, accounts for remaining jobs as not
+completed, and retains an explicit summary warning. The controller blocks both
+Start and Rerun after uncertain cleanup or worker completion without a summary.
+Logs and output access remain available, and closing the application is allowed.
+This is an application-session latch, not persistent host-wide containment;
+reopening the application is not evidence that cleanup completed. Investigation
+is required before further renders. Explainer retains potentially active workdirs
+and concept receipts preserve cleanup state even when rendering fails.
+
+## Cleanup evidence is independent of outcome
+
+`app.render.cleanup.RenderCleanupState` is Qt-free and shared by all render
+consumers. `JobResult.render_cleanup_state` is appended with a conservative
+`unknown` default; old positional construction remains possible but supplies no
+safe execution evidence. Every in-tree consumer rejects uncertainty before
+publishing artifacts or launching another render. Ordinary failure can coexist
+with complete cleanup. Outcome/return-code/diagnostic text cannot substitute for
+session observations. Production propagates typed state on exceptions even when
+there is no run directory or receipt persistence fails.
+
+Complete means observed leader reap, final captured POSIX group absence or owned
+Windows Job Object emptiness before close, no active reader and no pending resume
+step. It does not establish containment of detached scene code. POSIX zombies or
+failed probes may conservatively retain unknown. The GUI's blocked state is local
+to the application session; reopening the app is not cleanup evidence.
+
+
+Returned results are validated as a tuple before their cleanup state is latched.
+`not_started` is inconsistent with SUCCESS, a non-None render return code, or an
+outcome other than FAILED/MANIM_NOT_FOUND. Such contradictions become unknown;
+legitimate no-spawn failures with no return code remain not_started. Complete
+post-spawn rollback may still accompany FAILED/None. An interrupted reader start
+remains unknown regardless of identity publication or a transient false is_alive
+observation. Its potentially active output stream is not closed by that snapshot.

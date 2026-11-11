@@ -15,7 +15,10 @@ import threading
 import time
 
 from scene_production import agent
+from scene_production.completion import read_completion
+from app.render.cleanup import RenderCleanupState, cleanup_state
 from app.render.diagnostics import DiagnosticTimeline, exception_type
+from app.render.frame_rate import validate_fps
 from app.render.process_session import _signal_group
 from app.render.runner import DEFAULT_SUPERVISION_CLEANUP_TIMEOUT
 
@@ -102,7 +105,6 @@ def verify_result(attempt, data, returncode):
         or terminal.get("run_token") != started["run_token"]
         or any(e.get("protocol_version") != 1 or e.get("operation") != "render" for e in events)
         or terminal.get("exit_code") != returncode
-        or (terminal.get("status"), returncode) not in (("succeeded", 0), ("failed", 1))
     ):
         raise _EvidenceError("protocol_mismatch")
     if _read(attempt / "attempt.json") != terminal:
@@ -110,7 +112,16 @@ def verify_result(attempt, data, returncode):
     journal = _bounded_bytes(attempt / "events.jsonl")
     if _events(journal) != events:
         raise _EvidenceError("journal_mismatch")
-    if terminal["status"] == "succeeded":
+    completion = read_completion(data, returncode, expected_operation="render")
+    if completion.terminal is None:
+        # Contradictory/invalid protocol cannot authorize a release.
+        raise _EvidenceError("protocol_mismatch")
+    state = cleanup_state(terminal.get("render_cleanup_state"))
+    if completion.status == "unknown" or state == RenderCleanupState.UNKNOWN:
+        return "unknown"
+    if completion.status == "succeeded":
+        if state != RenderCleanupState.COMPLETE:
+            return "unknown"
         artifacts = terminal["artifacts"]
         receipt = agent._regular(artifacts["receipt"]["path"], attempt)
         if agent._verified_result(_read(receipt), attempt, "render") != artifacts:
@@ -130,12 +141,12 @@ def reconcile_evidence(directory):
         status = verify_result(
             directory / "agent", _bounded_bytes(directory / "protocol.log"), evidence["returncode"]
         )
-        return dict(evidence, status=status, **_handoff_result(directory))
+        return dict(evidence, status=status, **_handoff_result(directory, status))
     except (OSError, ValueError, KeyError, TypeError):
         return {"status": "unknown"}
 
 
-def _handoff_result(directory):
+def _handoff_result(directory, status):
     terminal = _read(directory / "agent" / "attempt.json")
     process = _read(directory / "process.json")
     result = {
@@ -147,7 +158,22 @@ def _handoff_result(directory):
         "exit_evidence": str(directory / "exit.json"),
         "semantic_acceptance": False,
     }
-    if terminal["status"] == "succeeded":
+    state = cleanup_state(terminal.get("render_cleanup_state"))
+    result["render_cleanup_state"] = state.value
+    if status == "unknown":
+        result["diagnostic_code"] = (
+            "cleanup_evidence_missing"
+            if state == RenderCleanupState.UNKNOWN
+            and terminal.get("render_cleanup_state") != "unknown"
+            else (
+                "render_cleanup_unverified"
+                if state == RenderCleanupState.UNKNOWN
+                else "agent_reported_unknown"
+            )
+        )
+        if state == RenderCleanupState.UNKNOWN:
+            result["process_cleanup_verified"] = False
+    if status == "succeeded":
         result.update(artifacts=terminal["artifacts"], verification_scope="retained_artifact_bytes")
     else:
         error = terminal.get("error", {})
@@ -159,6 +185,10 @@ def _handoff_result(directory):
             "operation_failed",
             "input_or_tool_missing",
             "invalid_input",
+            "render_cleanup_unverified",
+            "persistence_failed",
+            "transport_failed",
+            "interrupted",
         }:
             result["agent_error_code"] = error["code"]
         diagnostics = terminal.get("diagnostics", {})
@@ -188,9 +218,11 @@ def _arguments(payload, attempt):
         "timeout",
         "tool_timeout",
         "record_scene_frames",
+        "fps",
     }
     if set(payload) - allowed:
         raise ValueError("unsupported render parameter")
+    fps = validate_fps(payload.get("fps"))
     args = [sys.executable, "-m", "scene_production.agent", "render"]
     for name in ("scene_file", "scene", "timeline"):
         value = payload[name]
@@ -217,6 +249,8 @@ def _arguments(payload, attempt):
         raise ValueError("invalid frame option")
     if payload.get("record_scene_frames"):
         args.append("--record-scene-frames")
+    if fps is not None:
+        args.extend(["--fps", str(fps)])
     return args
 
 
@@ -368,7 +402,7 @@ def run_task(
                         status=status,
                         exit_observed=True,
                         returncode=process.returncode,
-                        **_handoff_result(directory),
+                        **_handoff_result(directory, status),
                     )
                 )
             except BaseException as exc:
