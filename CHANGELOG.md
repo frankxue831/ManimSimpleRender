@@ -25,6 +25,16 @@ All notable changes to this project are listed here. The format follows
 - Render phase diagnostics, complete GUI log export, implementation fingerprints
   and Explainer output identity records (#26).
 
+### Changed
+
+- Editorial-review writers now emit schema version 2 with a required local
+  `record_prepared_at` timestamp. Updated readers still accept strict version 1
+  records without migration or backfill, but older version 1-only readers reject
+  version 2: upgrade consumers before producing new records. Comparison output
+  adds `record_prepared_at` (null for version 1, the saved value for version 2)
+  and `timestamp_notice`; strict output-key consumers must allow these additive
+  fields. Preparation time does not establish review or publication time (#37).
+
 ### Changed: render cleanup evidence and upgrades
 
 - Render results now carry `render_cleanup_state` independently of success or
