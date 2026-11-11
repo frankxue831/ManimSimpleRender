@@ -134,7 +134,10 @@ before temporary output is created.
 
 Strict version 1 records remain readable without migration or timestamp backfill.
 Older version 1-only tools reject version 2 records: upgrade readers before
-producing version 2 records. Compare reports their timestamp as null; version 2 reports the saved value.
+producing version 2 records. For version 1 records, `compare` reports
+`record_prepared_at: null`; for version 2 records, it reports the saved value.
+Comparison output adds `record_prepared_at` and `timestamp_notice`; consumers
+that validate output keys must allow these additive fields.
 Previous links may reference either version and continue hashing the exact bytes.
 Equal or backwards clocks do not invalidate links. No durations or chronological
 conclusions are computed, and readiness remains `not_determined`.

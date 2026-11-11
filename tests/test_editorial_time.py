@@ -52,6 +52,18 @@ class EditorialTimeTests(unittest.TestCase):
         path.write_text(json.dumps(data))
         return path
 
+    def assert_rejected_version(self, data):
+        path = self.save(data)
+        with self.assertRaisesRegex(ValueError, "invalid review version"):
+            editorial._load(path)
+        with self.assertRaisesRegex(ValueError, "invalid review version"):
+            editorial.compare(path, self.video)
+        target = self.root / "rejected.json"
+        with self.assertRaisesRegex(ValueError, "invalid review version"):
+            editorial.record_review(self.video, self.assessment, target, previous=path)
+        self.assertFalse(target.exists())
+        self.assertFalse(list(self.root.glob(".editorial-*")))
+
     def test_frozen_clock_and_exact_keys(self):
         target = self.root / "out.json"
         with patch.object(editorial, "_prepared_at", return_value=self.timestamp) as clock:
@@ -64,6 +76,78 @@ class EditorialTimeTests(unittest.TestCase):
         self.assertEqual(
             editorial.compare(target, self.video)["record_prepared_at"], self.timestamp
         )
+
+    def test_missing_schema_version_is_rejected_for_both_record_shapes(self):
+        for timestamp_present in (False, True):
+            with self.subTest(timestamp_present=timestamp_present):
+                data = self.legacy()
+                del data["schema_version"]
+                if timestamp_present:
+                    data["record_prepared_at"] = self.timestamp
+                self.assert_rejected_version(data)
+
+    def test_schema_version_requires_supported_integer_without_coercion(self):
+        invalid = (None, True, False, "", "1", "2", 1.0, 2.0, 1.5, [], {}, -1, 0, 3)
+        for timestamp_present in (False, True):
+            for version in invalid:
+                with self.subTest(timestamp_present=timestamp_present, version=version):
+                    data = dict(self.legacy(), schema_version=version)
+                    if timestamp_present:
+                        data["record_prepared_at"] = self.timestamp
+                    self.assert_rejected_version(data)
+
+    def test_v1_and_v2_comparisons_preserve_timestamp_and_byte_identity_contracts(self):
+        changed = self.root / "changed.mp4"
+        changed.write_bytes(b"changed audiovisual bytes")
+        legacy_fields = {
+            "review",
+            "reviewed_video",
+            "candidate",
+            "assessment_current",
+            "candidate_requires_fresh_assessment",
+            "readiness",
+            "reviewed_video_available_and_unchanged",
+            "reviewer",
+            "scope",
+            "decision",
+            "findings",
+            "evidence",
+            "previous",
+            "previous_review_unchanged",
+            "notice",
+        }
+        legacy_results = {}
+        for version in (1, 2):
+            with self.subTest(version=version):
+                data = self.legacy()
+                if version == 2:
+                    data.update(schema_version=2, record_prepared_at=self.timestamp)
+                path = self.save(data)
+                raw = path.read_bytes()
+                self.assertEqual(editorial._load(path), data)
+                for candidate, current in ((self.video, True), (changed, False)):
+                    with self.subTest(candidate=candidate.name):
+                        result = editorial.compare(path, candidate)
+                        self.assertEqual(
+                            set(result), legacy_fields | {"record_prepared_at", "timestamp_notice"}
+                        )
+                        self.assertEqual(
+                            result["record_prepared_at"], self.timestamp if version == 2 else None
+                        )
+                        self.assertIn(
+                            "Local writer preparation time only", result["timestamp_notice"]
+                        )
+                        self.assertEqual(result["assessment_current"], current)
+                        self.assertEqual(result["candidate_requires_fresh_assessment"], not current)
+                        self.assertEqual(result["readiness"], "not_determined")
+                        self.assertEqual(result["decision"], self.assessment["decision"])
+                        self.assertEqual(result["findings"], self.assessment["findings"])
+                        legacy_values = {key: result[key] for key in legacy_fields - {"review"}}
+                        if version == 1:
+                            legacy_results[candidate] = legacy_values
+                        else:
+                            self.assertEqual(legacy_values, legacy_results[candidate])
+                self.assertEqual(path.read_bytes(), raw)
 
     def test_mixed_links_and_clock_order(self):
         for version in (1, 2):
