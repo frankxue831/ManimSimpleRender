@@ -219,8 +219,8 @@ and handoff time, see [Logging and diagnostics](docs/logging-and-diagnostics.md)
 ```bash
 pip install -r requirements-dev.txt          # adds black + flake8
 QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests   # run the test suite headless
-black --check app explainer scene_production tests main.py examples/scenes/netty_eventloop.py examples/scenes/tcp_stream.py examples/scenes/scene_font.py examples/scenes/revision_flow.py examples/revisions/run_flow.py
-flake8 app explainer scene_production tests main.py examples/scenes/netty_eventloop.py examples/scenes/tcp_stream.py examples/scenes/scene_font.py examples/scenes/revision_flow.py examples/revisions/run_flow.py
+black --check app explainer scene_production tests main.py examples/scenes/netty_eventloop.py examples/scenes/tcp_stream.py examples/scenes/scene_font.py examples/scenes/revision_flow.py examples/revisions/run_flow.py examples/silent_review
+flake8 app explainer scene_production tests main.py examples/scenes/netty_eventloop.py examples/scenes/tcp_stream.py examples/scenes/scene_font.py examples/scenes/revision_flow.py examples/revisions/run_flow.py examples/silent_review
 ```
 
 [CI](.github/workflows/ci.yml) runs these checks on pushes to master and pull requests. The architecture is

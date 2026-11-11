@@ -74,6 +74,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+from scene_production.completion import read_completion
+
 invocation = {
     "args": [
         sys.executable, "-m", "scene_production.agent", "render",
@@ -86,29 +88,30 @@ invocation = {
     "env": None,
     "shell": False,
 }
-result = subprocess.run(**invocation, capture_output=True, text=True, check=False)
-# Malformed or truncated JSONL must stop processing; never guess a result or retry.
-events = [json.loads(line) for line in result.stdout.splitlines()]
-started = [event for event in events if event.get("event") == "started"]
-terminal = [event for event in events if event.get("event") == "terminal"]
-if len(started) != 1 or len(terminal) != 1:
-    raise RuntimeError("No confirmed success; inspect this invocation before further work")
-run_token = started[0]["run_token"]  # Retain outside the attempt if needed later.
-if (
-    result.returncode != 0
-    or terminal[0].get("status") != "succeeded"
-    or any(event.get("run_token") != run_token for event in events)
-):
-    raise RuntimeError("No confirmed success; inspect terminal status and diagnostics")
-artifacts = terminal[0]["artifacts"]
+result = subprocess.run(**invocation, capture_output=True, check=False)
+# Keep the stdout/stderr capture and observed returncode for this invocation.
+completion = read_completion(
+    result.stdout, result.returncode, expected_operation="render"
+)
+if completion.status != "succeeded":
+    raise RuntimeError(
+        f"No confirmed success: {completion.status} ({completion.reason}); investigate, do not retry"
+    )
+run_token = completion.run_token  # Captured from this stream's actual started event.
+# Retain the token outside the attempt if needed for later correlation.
+artifacts = completion.terminal["artifacts"]
 receipt = json.loads(Path(artifacts["receipt"]["path"]).read_text(encoding="utf-8"))
 print("Video:", artifacts["video"]["path"])
 for frame in receipt["frames"]:
     print("Review frame:", frame["path"])
 ```
 
-This example accepts success only after exit 0, exactly one successful terminal and
-a matching invocation token. The [agent protocol](scene-agent.md#events-and-completion)
+This example accepts success only after exit 0, exactly one `started` followed by
+one successful terminal, and matching operation and invocation token. The pure
+reader rejects incomplete JSONL, duplicate keys and ambiguous protocol evidence
+as unknown. It checks the reported manifest's shape but does not read files or
+rehash artifacts. Reading the receipt above is for locating review frames, not
+another completion or integrity check. The [agent protocol](scene-agent.md#events-and-completion)
 defines failed and unknown outcomes, including usage failures that emit no `started`.
 Keep the recorded outcome when handling them; the example's exception only prevents
 unconfirmed success from being consumed. Do not automatically retry an unknown attempt.
