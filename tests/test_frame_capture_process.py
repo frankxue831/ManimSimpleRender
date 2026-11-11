@@ -32,6 +32,7 @@ class ProductionCommandProcessTests(unittest.TestCase):
             timeline.write_text('{"version":1,"segments":[{"label":"intro","start":0,"end":1}]}')
             result = render(source, "Ordinary", timeline, root / "runs", quality="ql", timeout=30)
             self.assertEqual(result["status"], "success")
+            self.assertEqual(result["render_cleanup_state"], "complete")
             log = (Path(result["run_dir"]) / "render.log").read_text()
             self.assertIn("retained stdout sentinel", log)
             self.assertIn("retained stderr sentinel", log)
@@ -66,6 +67,7 @@ class CaptureProcessTests(unittest.TestCase):
             receipt = next((root / "runs").glob("*/result.json"))
             data = json.loads(receipt.read_text())
             self.assertEqual((data["status"], data["stage"]), ("failed", "render"))
+            self.assertEqual(data["render_cleanup_state"], "complete")
             self.assertIn("call next_section", (receipt.parent / "render.log").read_text())
 
     @unittest.skipUnless(shutil.which("ffprobe"), "requires ffprobe for video inspection")
@@ -107,6 +109,7 @@ class CaptureProcessTests(unittest.TestCase):
                 timeout=30,
             )
             self.assertEqual(receipt["status"], "success")
+            self.assertEqual(receipt["render_cleanup_state"], "complete")
             trace = json.loads(Path(receipt["frame_trace"]["path"]).read_text())
             self.assertEqual(trace["frame_rate"], "15")
             self.assertEqual(trace["frame_count"], 12)

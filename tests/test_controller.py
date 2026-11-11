@@ -1726,18 +1726,24 @@ class ControllerTests(unittest.TestCase):
         controller.start_render()
         self.assertEqual(len(created), 1)
 
-    def test_finished_without_summary_falls_back_to_idle(self):
-        # BL-23: run() can throw before emitting finished_summary; QThread.finished
-        # still fires, so an idle fallback must run.
-        view, controller, created = self._make()
-        self._ready_view(view, controller)
-        controller.on_primary_clicked()
-        created[0].finished.emit()  # finished WITHOUT a preceding finished_summary
-        self.assertEqual(controller.state, "idle")
-        self.assertTrue(view.input_edit.isEnabled())
-        self.assertEqual(view.primary_button.text(), "Start Render")
-        self.assertEqual(view.status_label.property("level"), "error")
-        self.assertIn("without a summary", view.status_label.text().lower())
+    def test_uncertain_or_missing_summary_blocks_restart_but_allows_close(self):
+        for summary in (None, RenderSummary(failed=1, cleanup_unknown=True)):
+            with self.subTest(summary=summary):
+                view, controller, created = self._make()
+                self._ready_view(view, controller)
+                controller.on_primary_clicked()
+                if summary is not None:
+                    created[0].finished_summary.emit(summary)
+                created[0].finished.emit()
+                self.assertEqual(controller.state, "cleanup_unknown")
+                self.assertFalse(view.primary_button.isEnabled())
+                self.assertFalse(view.rerun_button.isEnabled())
+                controller.start_render()
+                controller._on_rerun_failed()
+                self.assertEqual(len(created), 1)
+                event = mock.Mock()
+                controller.on_close_requested(event)
+                event.ignore.assert_not_called()
 
     def test_shutdown_timer_uses_full_supervision_cleanup_budget(self):
         # Normal close is asynchronous, so its cooperative timer can cover the

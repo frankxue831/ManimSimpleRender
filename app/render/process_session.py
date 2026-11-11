@@ -9,12 +9,18 @@ import threading
 import time
 from dataclasses import dataclass
 
+from app.render.cleanup import RenderCleanupState, cleanup_state, set_cleanup_state
+
 _POLL_INTERVAL = 0.1
 _EOF = object()
 
 
 class _PostSpawnSetupError(Exception):
     """Wrap an ordinary acquisition failure after ``Popen`` succeeds."""
+
+    def __init__(self, cause, render_cleanup_state=RenderCleanupState.UNKNOWN):
+        super().__init__(cause)
+        self.render_cleanup_state = cleanup_state(render_cleanup_state)
 
 
 def _creation_flags():
@@ -193,8 +199,9 @@ def _rollback_spawned_process(process, group_target, terminate_timeout):
             process.kill()
     except BaseException:
         pass
+    code = None
     try:
-        process.wait(timeout=terminate_timeout)
+        code = process.wait(timeout=terminate_timeout)
     except BaseException:
         pass
     try:
@@ -202,6 +209,16 @@ def _rollback_spawned_process(process, group_target, terminate_timeout):
             process.stdout.close()
     except BaseException:
         pass
+
+    try:
+        if sys.platform != "win32" and type(code) is int:
+            try:
+                os.killpg(group_target, 0)
+            except ProcessLookupError:
+                return RenderCleanupState.COMPLETE
+    except BaseException:
+        pass
+    return RenderCleanupState.UNKNOWN
 
 
 class _WindowsJob:
@@ -365,21 +382,28 @@ class _ProcessSession:
     drain_timeout: float
     windows_job: object = None
     leader_exit_observed_at: object = None
+    render_cleanup_state: RenderCleanupState = RenderCleanupState.UNKNOWN
+    reader_start_attempted: bool = False
+    reader_start_completed: bool = False
 
     @classmethod
     def start(cls, command, *, env, terminate_timeout, drain_timeout):
-        process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            encoding="utf-8",
-            errors="replace",
-            creationflags=_creation_flags(),
-            start_new_session=(sys.platform != "win32"),
-            env=env,
-        )
+        try:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                encoding="utf-8",
+                errors="replace",
+                creationflags=_creation_flags(),
+                start_new_session=(sys.platform != "win32"),
+                env=env,
+            )
+        except Exception as exc:
+            set_cleanup_state(exc, RenderCleanupState.NOT_STARTED)
+            raise
         session = None
         try:
             session = cls(
@@ -393,6 +417,8 @@ class _ProcessSession:
             if sys.platform == "win32":
                 session.windows_job = _WindowsJob()
                 session.windows_job.assign(process)
+                # Resume is synchronous; an exception leaves this launch path
+                # permanently unwound before rollback observations are taken.
                 _resume_suspended_process(process.pid)
             try:
                 process.stdout.reconfigure(newline="\n")
@@ -404,22 +430,35 @@ class _ProcessSession:
                 args=(process.stdout, session.lines),
                 daemon=True,
             )
+            session.reader_start_attempted = True
             session.reader.start()
+            session.reader_start_completed = True
         except BaseException as exc:
-            if session is None:
-                _rollback_spawned_process(process, process.pid, terminate_timeout)
-            else:
-                session._cleanup_after_error()
+            state = RenderCleanupState.UNKNOWN
+            try:
+                if session is None:
+                    state = _rollback_spawned_process(process, process.pid, terminate_timeout)
+                else:
+                    session._cleanup_after_error()
+                    state = session.render_cleanup_state
+            except BaseException:
+                if session is not None:
+                    state = session.render_cleanup_state
+            set_cleanup_state(exc, state)
             if isinstance(exc, Exception):
-                raise _PostSpawnSetupError(exc) from exc
+                raise _PostSpawnSetupError(exc, state) from exc
             raise
         return session
 
     def finish(self, cancel_event, on_log):
         try:
             return self._finish(cancel_event, on_log)
-        except BaseException:
-            self._cleanup_after_error()
+        except BaseException as exc:
+            try:
+                self._cleanup_after_error()
+            except BaseException:
+                pass
+            set_cleanup_state(exc, self.render_cleanup_state)
             raise
 
     def _finish(self, cancel_event, on_log):
@@ -466,6 +505,7 @@ class _ProcessSession:
             _drain(self.lines, on_log)
             if self.process.stdout is not None:
                 self.process.stdout.close()
+        self._observe_cleanup(return_code)
         close_error = self._close_windows_job()
         if close_error:
             diagnostic = f"{diagnostic}; {close_error}" if diagnostic else close_error
@@ -532,6 +572,11 @@ class _ProcessSession:
                     self.windows_job.terminate()
                 except Exception as exc:
                     diagnostics.append(f"could not terminate Windows Job Object: {exc}")
+            # Reaping the leader can finish before its descendants disappear.
+            # Share this existing forced-cleanup window between leader wait and
+            # group observation; do not add another terminate_timeout to the
+            # exported total supervision budget.
+            forced_deadline = time.monotonic() + self.terminate_timeout
             try:
                 self.process.wait(timeout=self.terminate_timeout)
             except subprocess.TimeoutExpired:
@@ -540,15 +585,15 @@ class _ProcessSession:
             diagnostics.append(f"could not stop process group: {exc}")
         else:
             try:
-                if self._windows_job_owns_tree():
-                    if self._group_is_active():
-                        diagnostics.append(
-                            "Windows Job Object remained active after forced termination"
-                        )
+                owned_job = self._windows_job_owns_tree()
+                if owned_job or sys.platform != "win32":
+                    if self._wait_for_group_release(forced_deadline):
+                        owned_job_released = owned_job
                     else:
-                        owned_job_released = True
+                        target = "Windows Job Object" if owned_job else "process group"
+                        diagnostics.append(f"{target} remained active after forced termination")
             except Exception as exc:
-                diagnostics.append(f"could not verify Windows Job Object state: {exc}")
+                diagnostics.append(f"could not verify process group state: {exc}")
         if not owned_job_released:
             diagnostics.extend(taskkill_diagnostics)
         if diagnostics:
@@ -600,11 +645,13 @@ class _ProcessSession:
             self._stop_group()
             if self.process.poll() is None:
                 self.process.kill()
-            self._reap_leader()
+            return_code, _ = self._reap_leader()
             if self.reader is not None and self.reader.ident is not None:
                 self.reader.join(timeout=self.drain_timeout)
             reader_alive = self.reader is not None and self.reader.is_alive()
-            if not reader_alive and self.process.stdout is not None:
+            self._observe_cleanup(return_code)
+            uncertain_start = self.reader_start_attempted and not self.reader_start_completed
+            if not reader_alive and not uncertain_start and self.process.stdout is not None:
                 self.process.stdout.close()
         except BaseException:
             pass
@@ -613,6 +660,26 @@ class _ProcessSession:
                 self._close_windows_job()
             except BaseException:
                 pass
+
+    def _observe_cleanup(self, return_code):
+        # Snapshot before releasing Windows ownership. No text/outcome inference.
+        try:
+            if type(return_code) is not int:
+                return
+            # Identity publication precedes bootstrap completion. Even an
+            # ident plus is_alive() == False cannot prove a stopped reader
+            # after interrupted start(). Keep this entire path conservative.
+            if self.reader_start_attempted and not self.reader_start_completed:
+                return
+            if self.reader is not None and self.reader.is_alive():
+                return
+            if sys.platform == "win32" and not self._windows_job_owns_tree():
+                return
+            if self._group_is_active():
+                return
+            self.render_cleanup_state = RenderCleanupState.COMPLETE
+        except BaseException:
+            pass
 
     def _close_windows_job(self):
         if self.windows_job is None:

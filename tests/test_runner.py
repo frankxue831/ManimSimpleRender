@@ -247,6 +247,7 @@ class RunJobTests(unittest.TestCase):
         grandchild_pid = int(self.logs[0].split()[1])
         try:
             self.assertEqual(result.outcome, JobOutcome.SUCCESS, result.diagnostic)
+            self.assertEqual(result.render_cleanup_state, "complete")
             deadline = time.monotonic() + 3.0
             while time.monotonic() < deadline:
                 if not _windows_process_is_active(grandchild_pid):
@@ -360,6 +361,9 @@ class RunJobTests(unittest.TestCase):
         def spawn(*args, **kwargs):
             process = real_popen(*args, **kwargs)
             spawned.append(process)
+            # This fixture prevents native reader creation, so the test can
+            # release the pipe after its existing process-cleanup finally block.
+            self.addCleanup(process.stdout.close)
             return process
 
         try:
@@ -413,6 +417,9 @@ class RunJobTests(unittest.TestCase):
         def spawn(*args, **kwargs):
             process = real_popen(*args, **kwargs)
             spawned.append(process)
+            # This fixture prevents native reader creation, so the test can
+            # release the pipe after its existing process-cleanup finally block.
+            self.addCleanup(process.stdout.close)
             return process
 
         try:
@@ -522,6 +529,9 @@ class RunJobTests(unittest.TestCase):
         def spawn(*args, **kwargs):
             process = real_popen(*args, **kwargs)
             spawned.append(process)
+            # This fixture prevents native reader creation, so the test can
+            # release the pipe after its existing process-cleanup finally block.
+            self.addCleanup(process.stdout.close)
             return process
 
         try:

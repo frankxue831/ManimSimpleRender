@@ -17,6 +17,12 @@ import sys
 import tempfile
 import traceback
 
+from app.render.cleanup import (
+    RenderCleanupState,
+    cleanup_state,
+    result_cleanup_state,
+    set_cleanup_state,
+)
 from app.render.aggregation import JobOutcome
 from app.render.command_builder import build_command, manim_available
 from app.render.diagnostics import DiagnosticTimeline, exception_type, utc_timestamp
@@ -260,6 +266,7 @@ def render_storyboard(storyboard_path, out_path, quality=None, lang="en", on_log
         )
 
     workdir = tempfile.mkdtemp(prefix="explainer_")
+    render_state = RenderCleanupState.NOT_STARTED
     log = timeline = None
     diagnostic_dir = None
     try:
@@ -295,21 +302,32 @@ def render_storyboard(storyboard_path, out_path, quality=None, lang="en", on_log
             previous = env.get("PYTHONPATH", "")
             env["PYTHONPATH"] = REPO_ROOT + (os.pathsep + previous if previous else "")
         with phase("render"):
-            result = RenderRunner().run_job(
-                job,
-                command,
-                cancel_event=None,
-                on_log=log.write,
-                env=env,
-            )
+            render_state = RenderCleanupState.UNKNOWN
+            try:
+                result = RenderRunner().run_job(
+                    job,
+                    command,
+                    cancel_event=None,
+                    on_log=log.write,
+                    env=env,
+                )
+            except BaseException as runner_error:
+                render_state = cleanup_state(getattr(runner_error, "render_cleanup_state", None))
+                raise
+            render_state = result_cleanup_state(result)
             if getattr(result, "diagnostic", ""):
                 log.write(result.diagnostic)
             if timeline is not None:
                 timeline.event(
                     "render_result",
                     outcome=result.outcome.value,
+                    render_cleanup_state=render_state.value,
                     return_code=getattr(result, "return_code", None),
                 )
+            if render_state == RenderCleanupState.UNKNOWN or (
+                result.outcome == JobOutcome.SUCCESS and render_state != RenderCleanupState.COMPLETE
+            ):
+                raise RenderError("render_cleanup_unverified", workdir)
             if result.outcome != JobOutcome.SUCCESS:
                 raise RenderError(result.outcome, workdir)
 
@@ -336,11 +354,16 @@ def render_storyboard(storyboard_path, out_path, quality=None, lang="en", on_log
             timeline.event("artifact_binding", available=receipt_available)
             timeline.event("operation_finished", status="succeeded")
     except BaseException as exc:
+        set_cleanup_state(exc, render_state)
         if log is not None:
             log.record("".join(traceback.format_exception(exc)))
         if timeline is not None:
-            timeline.event("operation_failed", error_type=exception_type(exc))
-        if not isinstance(exc, RenderError):
+            timeline.event(
+                "operation_failed",
+                error_type=exception_type(exc),
+                render_cleanup_state=render_state.value,
+            )
+        if not isinstance(exc, RenderError) and render_state != RenderCleanupState.UNKNOWN:
             shutil.rmtree(workdir, ignore_errors=True)
         # RenderError keeps the generated scene/media. The persistent diagnostics
         # survive both this path and cleanup of unexpected errors.

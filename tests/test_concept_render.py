@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 from types import SimpleNamespace
 from tests.test_concept_scene import example
 from app.render.aggregation import JobOutcome
@@ -20,21 +21,37 @@ class FakeRunner:
         on_log("host fake runner - not real render")
         if self.mode == "timeout":
             cancel_event.wait(1)
-            return SimpleNamespace(outcome=JobOutcome.CANCELLED, return_code=-15, diagnostic="")
+            return SimpleNamespace(
+                render_cleanup_state="complete",
+                outcome=JobOutcome.CANCELLED,
+                return_code=-15,
+                diagnostic="",
+            )
         if self.mode == "fail":
             return SimpleNamespace(
-                outcome=JobOutcome.FAILED, return_code=2, diagnostic="fixture failure"
+                render_cleanup_state="complete",
+                outcome=JobOutcome.FAILED,
+                return_code=2,
+                diagnostic="fixture failure",
             )
         if self.mode == "missing":
             return SimpleNamespace(
-                outcome=JobOutcome.MANIM_NOT_FOUND, return_code=None, diagnostic="no manim"
+                render_cleanup_state="complete",
+                outcome=JobOutcome.MANIM_NOT_FOUND,
+                return_code=None,
+                diagnostic="no manim",
             )
         if self.mode == "success":
             media = Path(command[command.index("--media_dir") + 1])
             video = media / "videos" / "scene" / "480p15" / "ConceptScene.mp4"
             video.parent.mkdir(parents=True)
             video.write_bytes(b"fake video, never evidence of a real render")
-        return SimpleNamespace(outcome=JobOutcome.SUCCESS, return_code=0, diagnostic="")
+        return SimpleNamespace(
+            render_cleanup_state="complete",
+            outcome=JobOutcome.SUCCESS,
+            return_code=0,
+            diagnostic="",
+        )
 
 
 class RenderContract(unittest.TestCase):
@@ -52,6 +69,170 @@ class RenderContract(unittest.TestCase):
         return importlib.import_module("concept_render.render_adapter").render(
             self.input, self.root / "out", timeout=timeout, runner=runner
         )
+
+    def test_unknown_and_timer_persistence_failures_preserve_state(self):
+        for state in (None, "bogus", "unknown", "not_started", "complete"):
+            for fail_at in ("none", "join", "receipt", "runner_join"):
+                with self.subTest(state=state, fail_at=fail_at):
+                    runner = mock.Mock()
+                    result = SimpleNamespace(
+                        outcome=JobOutcome.SUCCESS, return_code=0, render_cleanup_state=state
+                    )
+                    runner.run_job.return_value = result
+                    timer = mock.Mock(ident=1)
+                    if "join" in fail_at:
+                        timer.join.side_effect = RuntimeError("join failed")
+                        timer.join.side_effect.render_cleanup_state = "complete"
+                    if fail_at == "runner_join":
+                        error = RuntimeError("runner failed")
+                        error.render_cleanup_state = state
+                        runner.run_job.side_effect = error
+                    from concept_render import render_adapter as adapter
+
+                    original = adapter._write_json
+                    with (
+                        mock.patch.object(adapter.threading, "Timer", return_value=timer),
+                        mock.patch.object(
+                            adapter,
+                            "_write_json",
+                            side_effect=(
+                                OSError("disk failed") if fail_at == "receipt" else original
+                            ),
+                        ),
+                        mock.patch("subprocess.Popen", side_effect=AssertionError("no child")),
+                        mock.patch("os.kill", side_effect=AssertionError("no signal")),
+                        mock.patch("os.killpg", side_effect=AssertionError("no signal")),
+                    ):
+                        with self.assertRaises(RuntimeError) as caught:
+                            self.render(runner)
+                    expected = (
+                        state
+                        if state == "complete"
+                        or (state == "not_started" and fail_at == "runner_join")
+                        else "unknown"
+                    )
+                    self.assertEqual(caught.exception.render_cleanup_state, expected)
+
+    def test_failed_no_start_return_code_is_unknown_but_safe_controls_remain(self):
+        from concept_render import render_adapter as adapter
+
+        cases = (
+            (JobOutcome.FAILED, 1, "not_started", "unknown"),
+            (JobOutcome.SUCCESS, None, "not_started", "unknown"),
+            (JobOutcome.SUCCESS, 0, "not_started", "unknown"),
+            (JobOutcome.FAILED, None, "not_started", "not_started"),
+            (JobOutcome.MANIM_NOT_FOUND, None, "not_started", "not_started"),
+            (JobOutcome.FAILED, None, "complete", "complete"),
+        )
+        for outcome, code, state, expected in cases:
+            with self.subTest(outcome=outcome, code=code, state=state):
+                result = SimpleNamespace(
+                    outcome=outcome, return_code=code, render_cleanup_state=state, diagnostic=""
+                )
+                with (
+                    mock.patch.object(adapter.threading, "Timer", return_value=mock.Mock()),
+                    mock.patch("subprocess.Popen", side_effect=AssertionError("no child")),
+                    mock.patch("subprocess.run", side_effect=AssertionError("no command")),
+                    mock.patch("os.kill", side_effect=AssertionError("no signal")),
+                    mock.patch("os.killpg", side_effect=AssertionError("no signal"), create=True),
+                ):
+                    with self.assertRaises(RuntimeError) as caught:
+                        self.render(mock.Mock(run_job=mock.Mock(return_value=result)))
+                self.assertEqual(caught.exception.render_cleanup_state, expected)
+                self.assertFalse(list((self.root / "out").rglob("*.mp4")))
+
+    def test_all_failure_replacements_retain_state_and_interruptions(self):
+        from concept_render import render_adapter as adapter
+
+        for state in ("unknown", "complete", "not_started"):
+            for kind in (OSError, ValueError, RuntimeError, KeyboardInterrupt, SystemExit):
+                with self.subTest(state=state, kind=kind):
+                    replacement = kind("receipt failure")
+                    result = SimpleNamespace(
+                        outcome=JobOutcome.FAILED,
+                        return_code=None,
+                        render_cleanup_state=state,
+                        diagnostic="",
+                    )
+                    with (
+                        mock.patch.object(adapter.threading, "Timer", return_value=mock.Mock()),
+                        mock.patch.object(adapter, "_write_json", side_effect=replacement),
+                        mock.patch("subprocess.Popen", side_effect=AssertionError("no child")),
+                        mock.patch("subprocess.run", side_effect=AssertionError("no command")),
+                        mock.patch("os.kill", side_effect=AssertionError("no signal")),
+                        mock.patch(
+                            "os.killpg", side_effect=AssertionError("no signal"), create=True
+                        ),
+                    ):
+                        with self.assertRaises(BaseException) as caught:
+                            self.render(mock.Mock(run_job=mock.Mock(return_value=result)))
+                    expected = state if issubclass(kind, Exception) else "unknown"
+                    self.assertEqual(caught.exception.render_cleanup_state, expected)
+                    if not issubclass(kind, OSError):
+                        self.assertIs(caught.exception, replacement)
+                    if not issubclass(kind, Exception):
+                        self.assertNotIsInstance(caught.exception, Exception)
+
+    def test_formatting_error_retains_state_and_primary_interrupt_is_not_wrapped(self):
+        from concept_render import render_adapter as adapter
+
+        class BadMessage(RuntimeError):
+            def __str__(self):
+                raise ValueError("formatting failure")
+
+        for error in (BadMessage(), KeyboardInterrupt(), SystemExit()):
+            error.render_cleanup_state = "unknown"
+            with (
+                mock.patch.object(adapter.threading, "Timer", return_value=mock.Mock()),
+                mock.patch.object(adapter, "_write_json", side_effect=OSError("disk")),
+                mock.patch("subprocess.Popen", side_effect=AssertionError("no child")),
+                mock.patch("subprocess.run", side_effect=AssertionError("no command")),
+                mock.patch("os.kill", side_effect=AssertionError("no signal")),
+                mock.patch("os.killpg", side_effect=AssertionError("no signal"), create=True),
+            ):
+                with self.assertRaises(BaseException) as caught:
+                    self.render(mock.Mock(run_job=mock.Mock(side_effect=error)))
+            self.assertEqual(caught.exception.render_cleanup_state, "unknown")
+            if not isinstance(error, Exception):
+                self.assertIs(caught.exception, error)
+
+    def test_unknown_cleanup_diagnostic_survives_without_success_receipt(self):
+        from concept_render import render_adapter as adapter
+
+        for outcome in (JobOutcome.SUCCESS, JobOutcome.FAILED):
+            with self.subTest(outcome=outcome):
+                diagnostic = "owned group probe failed: fixture detail"
+
+                class UncertainRunner(FakeRunner):
+                    def run_job(self, *args, **kwargs):
+                        result = super().run_job(*args, **kwargs)
+                        result.render_cleanup_state = "unknown"
+                        result.outcome = outcome
+                        result.diagnostic = diagnostic
+                        return result
+
+                with (
+                    mock.patch.object(adapter.threading, "Timer", return_value=mock.Mock()),
+                    mock.patch("subprocess.Popen", side_effect=AssertionError("no child")),
+                    mock.patch("subprocess.run", side_effect=AssertionError("no command")),
+                    mock.patch("os.kill", side_effect=AssertionError("no signal")),
+                    mock.patch("os.killpg", side_effect=AssertionError("no signal"), create=True),
+                ):
+                    with self.assertRaisesRegex(
+                        RuntimeError, "render cleanup is unverified"
+                    ) as caught:
+                        self.render(UncertainRunner())
+                self.assertEqual(caught.exception.render_cleanup_state, "unknown")
+        receipts = list((self.root / "out").rglob("result.json"))
+        self.assertEqual(len(receipts), 2)
+        for path in receipts:
+            result = json.loads(path.read_text())
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["stage"], "render")
+            self.assertEqual(result["render_cleanup_state"], "unknown")
+            self.assertNotIn("video", result)
+            self.assertIn(diagnostic, Path(result["log"]).read_text())
+            self.assertTrue(list(path.parent.rglob("ConceptScene.mp4")))
 
     def test_success_receipt_and_times(self):
         result = self.render(FakeRunner())
