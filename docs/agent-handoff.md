@@ -370,3 +370,48 @@ unverified. Read-only reconciliation preserves unknown. The render slot remains
 held, and dependents remain blocked. Existing fenced finish/eligibility rules,
 launch gates and audited abandonment proofs are unchanged; wrapper exit, missing
 PIDs, operator assertions and same-boot scans are not new release proofs.
+
+### Reproducible real-Manim handoff regression
+
+The public two-second fixture in `tests/support/real_handoff_scene.py` uses only
+geometric objects. With the existing render prerequisites installed, run from the
+trusted checkout root (the chosen output directory must not already exist):
+
+```sh
+MSR_HANDOFF_EVIDENCE_DIR=/existing/parent/new-handoff-fixture \
+  python -m unittest -v tests.e2e.test_real_handoff
+```
+
+This is deterministic local **multiprocess integration**, not independent-agent
+review, human review or semantic acceptance. Authorization strings are explicitly
+invented fixture data, not actual user quotes or permission for other work.
+
+The regression creates draft -> render -> review tasks in one ledger. A consumer
+process ACKs both created and ready events, then exits normally before claiming.
+Fresh CLI processes verify an empty inbox, no attempt, and discovery via the durable
+eligible-task scan. This tests the ACK-before-claim interruption gap, not an OS crash
+or recovery of already-running/unknown work.
+
+Two local contender processes rendezvous at a test-only pipe barrier, then each
+invokes the ordinary handoff CLI once. The harness requires observed invocation
+overlap, one successful process and one rejected claim, one render attempt/output,
+and matching started/terminal tokens, observed exit, durable state, receipt and
+current artifact hashes. The winner is deliberately unspecified. The barrier does
+not make SQLite transactions simultaneous or install a scheduler/consumer daemon.
+Inputs are also compared with their prepared fixture hashes; this caller check
+does not add content-bound authorization to the ledger.
+
+`summary.json` reports API/fixture success and `decision: needs_review`. The manual
+review task remains pending and eligible, without a claim. Nobody has assessed the
+pixels, animation meaning or audience understanding. Frame count/duration checks
+and retained PNGs are not a visual PASS or permission to publish.
+
+Without the environment variable, successful temporary evidence is removed;
+failed evidence is retained and its location printed. An explicit directory retains
+both successes and failures and is never reused. Preserve failures and investigate;
+there is no automatic render retry, database repair or unknown-state resolution.
+Timeout cleanup is bounded and best-effort, not proof all descendants stopped.
+The per-PR `readme-quickstart` job requires the real dependencies, bounds this step
+to three minutes and retains only public fixture inputs, command/protocol/exit logs,
+media and summaries for seven days, including on failure. It excludes the ledger
+database. Other test jobs skip this regression when render tools are absent.

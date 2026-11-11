@@ -101,10 +101,43 @@ jobs:
           python -c "import manim, manim_voiceover; print('manim', manim.__version__)"
           explainer verify examples/evidence-budget.story.yaml
 
+      - name: Real caption-free evidence and legacy frame exports
+        run: |
+          source .venv/bin/activate
+          python -c "import PIL, shutil; assert shutil.which('ffmpeg') and shutil.which('ffprobe'), 'media tools required'"
+          python -m unittest tests.test_production_evidence_export tests.test_production_visual_frames
+
       - name: Real-Manim compatibility (code, video, voiceover, frame tracing)
         run: |
           source .venv/bin/activate
           python -m unittest tests.explainer_tests.test_code_compat tests.e2e.test_real_render_smoke tests.test_frame_capture_process
+
+      - name: Real-Manim concurrent handoff regression
+        id: real-handoff
+        timeout-minutes: 3
+        env:
+          MSR_HANDOFF_EVIDENCE_DIR: ${{ runner.temp }}/real-handoff-fixture
+        run: |
+          source .venv/bin/activate
+          python -c 'from tests.e2e.test_real_handoff import READY; assert READY'
+          python -m unittest -v tests.e2e.test_real_handoff
+
+      # Fixture-only inputs and observed outputs, including failure evidence.
+      # Do not upload the ledger database or machine execution-identity records.
+      - name: Retain public handoff fixture evidence
+        if: ${{ always() && steps.real-handoff.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-handoff-evidence-${{ matrix.python-version }}
+          path: |
+            ${{ runner.temp }}/real-handoff-fixture/inputs/
+            ${{ runner.temp }}/real-handoff-fixture/commands/
+            ${{ runner.temp }}/real-handoff-fixture/workflow/outputs/
+            ${{ runner.temp }}/real-handoff-fixture/summary.json
+            ${{ runner.temp }}/real-handoff-fixture/failure.json
+            ${{ runner.temp }}/real-handoff-fixture/review-handoff.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Traced silent revision and review example
         run: |

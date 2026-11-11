@@ -26,7 +26,8 @@ The guides specify installation and output-directory rules for each interface.
 - [Caption sidecars](scene-captions.md): explicit frame events, external SRT and binding checks.
 - [Editorial review](editorial-review.md): version-bound findings and candidate assessments.
 - [Audio previews](scene-audio.md): freeze existing WAV inputs and create a separate preview.
-- [Caption-linked frame samples](scene-frame-samples.md): bounded, exact-index PNG extraction.
+- [Frame evidence and caption-linked samples](scene-frame-samples.md): bounded native PNGs,
+  coverage indexes and labelled raster sheets from completed runs.
 - [Logging and diagnostics](logging-and-diagnostics.md): locate logs and interpret failures and timing.
 
 A production timeline selects inspection times; the Python Scene controls the animation.
@@ -39,6 +40,7 @@ facts and audio separately before claiming that an explanation is ready.
 - [Generated diagram motion](diagram-motion.md): supported path and identity rules.
 - [Executable revision example](scene-revision.md#executable-revision-example).
 - [Silent review workflow example](silent-review-example.md): render, revise and retain a candidate for review.
+- [Real-Manim handoff regression](agent-handoff.md#reproducible-real-manim-handoff-regression): concurrent local claims, durable discovery and a pending review.
 - [Contributor guide](../AGENTS.md) and [development checks](../README.md#development).
 - [Shared render-core decision](adr/0001-render-core-boundary.md), with subsequent implementation status.
 - [Changelog](../CHANGELOG.md) for released and unreleased capabilities.
