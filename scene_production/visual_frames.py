@@ -1,4 +1,4 @@
-"""Bounded caption-linked frame samples from an already verified production run.
+"""Native frame evidence and legacy caption-linked samples from retained runs.
 
 This is technical sampling, not visual approval, subtitle overlay or causal
 source mapping. Local files and tools are trusted; concurrent edits are not safe.
@@ -193,16 +193,64 @@ def export(captions_manifest, output_dir, frame_indices=None, tool_timeout=30):
     return result
 
 
+def export_run(
+    from_run,
+    output_dir,
+    *,
+    frame_indices=None,
+    all_frames=False,
+    tool_timeout=30,
+    operation_timeout=180,
+    cancel_event=None,
+):
+    """Export caption-free native frames and labelled raster sheets lazily."""
+    from .evidence_export import export_run as run
+
+    return run(
+        from_run,
+        output_dir,
+        frame_indices=frame_indices,
+        all_frames=all_frames,
+        tool_timeout=tool_timeout,
+        operation_timeout=operation_timeout,
+        cancel_event=cancel_event,
+    )
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--captions", required=True)
+    origin = parser.add_mutually_exclusive_group(required=True)
+    origin.add_argument("--captions")
+    origin.add_argument("--from-run")
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--frames", nargs="+", type=int)
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--frames", nargs="+", type=int)
+    selection.add_argument("--all-frames", action="store_true")
+    parser.add_argument("--operation-timeout", type=float)
     parser.add_argument("--tool-timeout", type=float, default=30)
     args = parser.parse_args(argv)
     try:
-        result = export(args.captions, args.output_dir, args.frames, args.tool_timeout)
-    except (OSError, ValueError, RuntimeError, KeyError, subprocess.SubprocessError) as exc:
+        if args.captions:
+            if args.all_frames or args.operation_timeout is not None:
+                raise ValueError("--all-frames and --operation-timeout require --from-run")
+            result = export(args.captions, args.output_dir, args.frames, args.tool_timeout)
+        else:
+            result = export_run(
+                args.from_run,
+                args.output_dir,
+                frame_indices=args.frames,
+                all_frames=args.all_frames,
+                tool_timeout=args.tool_timeout,
+                operation_timeout=180 if args.operation_timeout is None else args.operation_timeout,
+            )
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        KeyError,
+        subprocess.SubprocessError,
+    ) as exc:
         parser.exit(2, f"frame sampling failed: {exc}\n")
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0

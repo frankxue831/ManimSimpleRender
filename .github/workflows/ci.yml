@@ -101,6 +101,12 @@ jobs:
           python -c "import manim, manim_voiceover; print('manim', manim.__version__)"
           explainer verify examples/evidence-budget.story.yaml
 
+      - name: Real caption-free evidence and legacy frame exports
+        run: |
+          source .venv/bin/activate
+          python -c "import PIL, shutil; assert shutil.which('ffmpeg') and shutil.which('ffprobe'), 'media tools required'"
+          python -m unittest tests.test_production_evidence_export tests.test_production_visual_frames
+
       - name: Real-Manim compatibility (code, video, voiceover, frame tracing)
         run: |
           source .venv/bin/activate
