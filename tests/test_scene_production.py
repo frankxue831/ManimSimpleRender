@@ -10,6 +10,42 @@ from app.render.aggregation import JobOutcome
 
 
 class ProductionTests(unittest.TestCase):
+    def test_render_disables_optional_update_check_without_changing_verbosity(self):
+        commands = []
+
+        class Failed:
+            def run_job(self, job, command, event, log, env):
+                commands.append(command)
+                log("render stderr remains available")
+                return JobResult(job, 1, JobOutcome.FAILED)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "scene.py"
+            source.write_text(
+                "from manim import Scene\nclass Demo(Scene):\n def construct(self): pass\n"
+            )
+            timeline = root / "timeline.json"
+            timeline.write_text('{"version":1,"segments":[{"label":"intro","start":0,"end":1}]}')
+            for traced in (False, True):
+                with self.subTest(traced=traced):
+                    output = root / str(traced)
+                    with self.assertRaisesRegex(RuntimeError, "render failed"):
+                        render(
+                            source,
+                            "Demo",
+                            timeline,
+                            output,
+                            runner=Failed(),
+                            record_scene_frames=traced,
+                        )
+                    self.assertIn("--silent", commands[-1])
+                    self.assertNotIn("--verbosity", commands[-1])
+                    self.assertIn(
+                        "render stderr remains available",
+                        next(output.glob("*/render.log")).read_text(),
+                    )
+
     def test_timeline(self):
         base = {"version": 1, "segments": [{"label": "intro", "start": 0, "end": 1}]}
         self.assertEqual(load_timeline(json.dumps(base).encode()), base)

@@ -15,6 +15,9 @@ python -m scene_production --scene-file examples/scenes/netty_eventloop.py --sce
 After installing the project, `scene-production` accepts the same arguments.
 Paths are resolved from the caller's current directory. Scene sources and their
 sibling imports stay in their original location. Each run creates a new directory.
+Production renders disable Manim's optional version-update network check with
+`--silent`; normal render output still goes to `render.log`. This does not block
+network access by trusted scene code or its dependencies.
 
 A timeline is inspection configuration, not animation input. It describes expected
 video duration and sample times; changing it cannot change the animation:

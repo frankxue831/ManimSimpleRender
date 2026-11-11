@@ -483,7 +483,9 @@ def render(
                 timer.daemon = True
                 job = RenderJob(str(source), scene)
                 command = build_command(job, flag, str(run / "media"))
-                command += ["--disable_caching"]
+                # Manim's --silent disables only its optional PyPI update check,
+                # not render logging. A completed render should not wait on it.
+                command += ["--disable_caching", "--silent"]
                 if record_scene_frames:
                     if command[:3] != [sys.executable, "-m", "manim"]:
                         raise ValueError(

@@ -16,8 +16,9 @@ Use a trusted checkout and its supported Python 3.12/3.13 render environment wit
 **Manim 0.22.1**, `ffmpeg`, and `ffprobe` on PATH. Follow the repository's normal
 [installation instructions](../README.md#quick-start). The native frame recorder
 uses Manim writer internals; an older installed Manim is not interchangeable.
-If recording fails on an older version, retain the failed attempt and use the
-supported environment. An untraced render and decoded-only verification can
+An incompatible version fails before scene execution, with an install hint in
+the retained `render.log`. Keep the failed attempt and use the supported
+environment for a fresh run. An untraced render and decoded-only verification can
 provide separate, weaker evidence but cannot count as this traced audit.
 The fixture uses ordinary `Text`, two rectangles, and an arrow. It requires no
 LaTeX, local fonts or media assets, narration, credentials, or network access.

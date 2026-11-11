@@ -14,7 +14,12 @@ import runpy
 import sys
 import tempfile
 
+from app.render.command_builder import display_command
+
 from .frame_trace import FrameTrace
+
+# Private writer hooks are validated against the render extras' exact Manim pin.
+_CAPTURE_MANIM_VERSION = "0.22.1"
 
 
 class _CaptureState:
@@ -105,6 +110,19 @@ def main():
     target = os.environ.get("SCENE_PRODUCTION_FRAME_TRACE")
     if not target or len(sys.argv) < 2:
         raise ValueError("frame capture requires a source and a scoped trace output")
+    # Check the actual backend in this isolated render interpreter before importing
+    # scene code or installing writer hooks. Ordinary untraced renders are unchanged.
+    import manim
+
+    version = getattr(manim, "__version__", "unknown")
+    if version != _CAPTURE_MANIM_VERSION:
+        install = display_command(
+            [sys.executable, "-m", "pip", "install", f"manim=={_CAPTURE_MANIM_VERSION}"]
+        )
+        raise RuntimeError(
+            f"Frame tracing requires Manim {_CAPTURE_MANIM_VERSION}; found {version}. "
+            f"Install the supported version in this interpreter: {install}"
+        )
     source = Path(sys.argv[1]).resolve()
     source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
     # These are the existing installed Manim classes, not another render engine.

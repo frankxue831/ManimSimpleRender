@@ -1,7 +1,15 @@
 """Capture hooks observe the exact frames handed to the existing writer."""
 
-from types import SimpleNamespace
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+import tomllib
+from types import ModuleType, SimpleNamespace
 import unittest
+from unittest.mock import patch
+from scene_production import frame_capture
 from scene_production.frame_capture import capture_hooks
 
 
@@ -36,6 +44,60 @@ class FakeScene:
 
     def next_section(self, name="unnamed", *args, **kwargs):
         self.calls.append(name)
+
+
+class CapturePreflightTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.source = self.root / "scene.py"
+        self.source.write_text("# trusted scene fixture\n")
+        self.trace = self.root / "frame-trace.json"
+        self.manim = ModuleType("manim")
+        self.manim.Scene = FakeScene
+        writer_module = ModuleType("manim.scene.scene_file_writer")
+        writer_module.SceneFileWriter = Writer
+        self.enterContext(
+            patch.dict(sys.modules, {"manim": self.manim, writer_module.__name__: writer_module})
+        )
+        self.enterContext(patch.dict(os.environ, SCENE_PRODUCTION_FRAME_TRACE=str(self.trace)))
+        self.enterContext(patch.object(sys, "argv", ["capture", str(self.source), "Demo"]))
+        self.executed = []
+
+        def run_manim(*args, **kwargs):
+            self.executed.append((args, kwargs))
+            writer = Writer()
+            FakeScene(writer).next_section("intro")
+            writer.write_frame(Pixels())
+
+        self.enterContext(patch.object(frame_capture.runpy, "run_module", side_effect=run_manim))
+
+    def test_unsupported_version_stops_before_scene_execution_and_trace_output(self):
+        for version in ("0.20.1", "0.22.0", "0.22.2", "0.23.0", "unknown"):
+            with self.subTest(version=version):
+                self.manim.__version__ = version
+                original_write = Writer.write_frame
+                with self.assertRaisesRegex(RuntimeError, "requires Manim 0.22.1") as caught:
+                    frame_capture.main()
+                self.assertIn(version, str(caught.exception))
+                self.assertIn(sys.executable, str(caught.exception))
+                self.assertIn("-m pip install", str(caught.exception))
+                self.assertEqual(self.executed, [])
+                self.assertFalse(self.trace.exists())
+                self.assertIs(Writer.write_frame, original_write)
+
+    def test_render_extra_versions_run_cli_and_publish_trace(self):
+        project = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        extras = tomllib.loads(project.read_text())["project"]["optional-dependencies"]
+        for extra in ("gui", "explainer"):
+            with self.subTest(extra=extra):
+                requirement = next(value for value in extras[extra] if value.startswith("manim=="))
+                self.manim.__version__ = requirement.removeprefix("manim==")
+                self.executed.clear()
+                self.assertEqual(frame_capture.main(), 0)
+                self.assertEqual(self.executed, [(("manim",), {"run_name": "__main__"})])
+                self.assertEqual(json.loads(self.trace.read_text())["frame_count"], 1)
 
 
 class CaptureHooksTests(unittest.TestCase):
