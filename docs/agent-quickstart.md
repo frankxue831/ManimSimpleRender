@@ -194,3 +194,16 @@ Exit codes are specific to each interface; there is no shared approval code:
   dependencies, claims and recovery. Start with `python -m scene_production.handoff describe`.
   Callers supply tasks, verify actual user authorization and operate the consumer loop;
   this interface does not launch agents or deliver external messages.
+
+## Request 1080p30 explicitly
+
+Append `--quality qh --fps 30` to the render command above to request 1920×1080 at
+30fps. The public Python equivalent is `render(..., quality="qh", fps=30)`.
+FPS is optional: omission or Python `None` preserves the preset. Python accepts
+only integers from 1 to 240, not booleans, floats or strings; CLI accepts integer
+tokens in the same range. Invalid FPS is rejected before the attempt is created.
+
+`requested_fps` records intent only. Trusted scene/config changes may supersede
+it; verify observed probe/trace data. The option does not guarantee CFR, exact
+duration, semantic acceptance or delivery, and does not expand downstream helper
+limits. Reinspection does not render or accept a new FPS option.

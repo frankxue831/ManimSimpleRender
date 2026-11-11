@@ -130,3 +130,28 @@ The hint reads at most the final 64KiB, removes ANSI CSI colour/control sequence
 not echo the supplied font/log value. It is a hint from untrusted output, not a
 certified root cause. Other exceptions, incomplete logs, cancellation and timeout
 retain their existing failure behavior. Inspect the preserved log if no hint fits.
+
+### Explicit requested frame rate
+
+For a 1080p30 request, use `render(scene_file, scene, timeline, output_dir,
+quality="qh", fps=30)` or append `--quality qh --fps 30` to the production CLI.
+`fps` is a trailing keyword-only argument. Only `None` or an integer from 1
+through 240 is accepted; booleans, floats (including `30.0`), strings and coercions
+are rejected. CLI values must be integer tokens in that range. Omission or `None`
+leaves the existing quality preset and command unchanged. Quality labels do not
+independently select FPS.
+
+This records requested intent, not an output guarantee: trusted scene/camera/config
+code may override it. Verify actual probe and trace evidence for your needs. It
+promises neither constant frame rate, exact duration nor delivery acceptance and
+does not repair timing failures. Existing downstream limits remain independent:
+the legacy visual-frame helper accepts only 15/30fps and at most 120 seconds.
+The [caption-free evidence exporter](scene-frame-samples.md#supported-local-inputs-and-limits)
+accepts observed nominal rates up to 60fps, so a valid 1..240fps render request
+does not guarantee export eligibility.
+
+Opted-in receipts include `requested_fps` and the prepared command, even if a later
+render step fails. Command preparation does not prove that a process started;
+cleanup evidence and terminal completion rules remain authoritative. Default and
+historical receipts have no new requested-rate field. Reinspection uses the
+recorded video and bound origin receipt, without making a new FPS request.

@@ -18,6 +18,7 @@ from scene_production import agent
 from scene_production.completion import read_completion
 from app.render.cleanup import RenderCleanupState, cleanup_state
 from app.render.diagnostics import DiagnosticTimeline, exception_type
+from app.render.frame_rate import validate_fps
 from app.render.process_session import _signal_group
 from app.render.runner import DEFAULT_SUPERVISION_CLEANUP_TIMEOUT
 
@@ -217,9 +218,11 @@ def _arguments(payload, attempt):
         "timeout",
         "tool_timeout",
         "record_scene_frames",
+        "fps",
     }
     if set(payload) - allowed:
         raise ValueError("unsupported render parameter")
+    fps = validate_fps(payload.get("fps"))
     args = [sys.executable, "-m", "scene_production.agent", "render"]
     for name in ("scene_file", "scene", "timeline"):
         value = payload[name]
@@ -246,6 +249,8 @@ def _arguments(payload, attempt):
         raise ValueError("invalid frame option")
     if payload.get("record_scene_frames"):
         args.append("--record-scene-frames")
+    if fps is not None:
+        args.extend(["--fps", str(fps)])
     return args
 
 

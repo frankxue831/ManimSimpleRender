@@ -26,6 +26,7 @@ from app.render.cleanup import (
 )
 from app.render.command_builder import build_command
 from app.render.diagnostics import DiagnosticTimeline, exception_type
+from app.render.frame_rate import validate_fps
 from app.render.implementation import write_implementation_manifest
 from app.render.jobs import RenderJob
 from app.render.quality import known_quality_flags
@@ -443,11 +444,14 @@ def render(
     cancel_event=None,
     runner=None,
     record_scene_frames=False,
+    *,
+    fps=None,
 ):
     """Render a trusted scene with invocation-local cleanup evidence.
 
     Evidence concerns the supervised render session, not media inspection tools.
-    No receipt is needed to retain this evidence on an exception.
+    No receipt is needed to retain this evidence on an exception. ``fps`` is optional
+    requested intent; source overrides and observed media remain authoritative.
     """
     cleanup = {"state": RenderCleanupState.NOT_STARTED}
     try:
@@ -462,7 +466,8 @@ def render(
             cancel_event,
             runner,
             record_scene_frames,
-            cleanup,
+            _cleanup=cleanup,
+            fps=fps,
         )
     except BaseException as exc:
         if isinstance(exc, (_ProductionInterrupted, KeyboardInterrupt, SystemExit)):
@@ -483,8 +488,11 @@ def _render(
     runner=None,
     record_scene_frames=False,
     _cleanup=None,
+    *,
+    fps=None,
 ):
     """Return success only after machine inspection; failures retain result.json."""
+    validate_fps(fps)
     if type(record_scene_frames) is not bool:
         raise ValueError("record_scene_frames must be boolean")
     for value in (timeout, tool_timeout):
@@ -514,6 +522,8 @@ def _render(
         "run_dir": str(run),
         "render_cleanup_state": _cleanup["state"].value,
     }
+    if fps is not None:
+        receipt["requested_fps"] = fps
     with DiagnosticTimeline(
         run / "diagnostics.jsonl", context={"operation": "render", "run_id": run.name}
     ) as diagnostics:
@@ -540,7 +550,7 @@ def _render(
                 timer = threading.Timer(timeout, deadline)
                 timer.daemon = True
                 job = RenderJob(str(source), scene)
-                command = build_command(job, flag, str(run / "media"))
+                command = build_command(job, flag, str(run / "media"), fps=fps)
                 # Manim's --silent disables only its optional PyPI update check,
                 # not render logging. A completed render should not wait on it.
                 command += ["--disable_caching", "--silent"]
@@ -556,6 +566,9 @@ def _render(
                         "capture",
                         *command[3:],
                     ]
+                if fps is not None:
+                    # Preparation evidence, not proof that the process was spawned.
+                    receipt["command"] = list(command)
                 env = os.environ.copy()
                 env["PYTHONDONTWRITEBYTECODE"] = "1"
                 if record_scene_frames:
