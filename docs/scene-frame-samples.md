@@ -71,7 +71,9 @@ Import, help and the caption path do not import Pillow, Manim or Qt.
 
 Caption-free export requires optional `Pillow>=11` (the `[review]` extra, also
 provided by the supported Manim extras), plus local ffmpeg/ffprobe with
-`-fps_mode` support. Missing tools/dependencies fail explicitly; export never
+`-fps_mode` support. From a trusted checkout, install the review-only Python
+dependency with `python -m pip install -e ".[review]"`; ffmpeg/ffprobe must be
+installed separately. Missing tools/dependencies fail explicitly; export never
 installs software, executes saved source, contacts providers, or falls back to
 `-vsync`. Pillow's embedded default font is used; without FreeType the embedded
 bitmap font is enlarged for readable labels. No host fonts or browser are needed.
@@ -190,6 +192,9 @@ nor an exhaustive export establishes continuous playback/audio review.
 
 Inputs and all required outputs are revalidated before publication. Manifest
 publication links a fully written temporary file exclusively to its final name.
+The output filesystem must support hard links within that directory. If it does
+not, publication fails without a success manifest; choose a supported filesystem
+and a new output directory rather than reusing the partial export.
 Failures, cancellation, missing/corrupt artifacts, or changed inputs do not
 publish a valid success manifest; owned partial output remains for inspection.
 An existing directory, symlink output/ancestor, or output inside the retained run
