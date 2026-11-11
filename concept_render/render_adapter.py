@@ -7,6 +7,12 @@ from pathlib import Path
 import tempfile
 import threading
 
+from app.render.cleanup import (
+    RenderCleanupState,
+    cleanup_state,
+    result_cleanup_state,
+    set_cleanup_state,
+)
 from app.render.aggregation import JobOutcome
 from app.render.command_builder import build_command
 from app.render.jobs import RenderJob
@@ -22,7 +28,18 @@ def _write_json(path, value):
 
 
 def render(input_path, output_dir, timeout=60, runner=None) -> dict:
-    """Return an artifact receipt, not a teaching-quality assessment."""
+    """Return an artifact receipt, retaining cleanup evidence on every error."""
+    cleanup = {"state": RenderCleanupState.NOT_STARTED}
+    try:
+        return _render(input_path, output_dir, timeout, runner, cleanup)
+    except BaseException as exc:
+        if not isinstance(exc, Exception):
+            cleanup["state"] = RenderCleanupState.UNKNOWN
+        set_cleanup_state(exc, cleanup["state"])
+        raise
+
+
+def _render(input_path, output_dir, timeout, runner, _cleanup):
     if type(timeout) not in (int, float) or not 0 < timeout <= 120 or not math.isfinite(timeout):
         raise ValueError("timeout must be a finite number in (0, 120]")
     with Path(input_path).open("rb") as source:
@@ -42,6 +59,7 @@ def render(input_path, output_dir, timeout=60, runner=None) -> dict:
     log_path = run_dir / "render.log"
     receipt_path = run_dir / "result.json"
     media_dir = run_dir / "media"
+    _cleanup["state"] = RenderCleanupState.NOT_STARTED
     stage = "prepare"
     try:
         log_path.touch()
@@ -63,11 +81,24 @@ def render(input_path, output_dir, timeout=60, runner=None) -> dict:
 
             try:
                 timer.start()
-                outcome = executor.run_job(job, command, cancel_event, on_log, None)
+                _cleanup["state"] = RenderCleanupState.UNKNOWN
+                try:
+                    outcome = executor.run_job(job, command, cancel_event, on_log, None)
+                except BaseException as runner_error:
+                    _cleanup["state"] = cleanup_state(
+                        getattr(runner_error, "render_cleanup_state", None)
+                    )
+                    raise
+                _cleanup["state"] = result_cleanup_state(outcome)
             finally:
                 timer.cancel()
                 if timer.ident is not None:
                     timer.join()
+            if _cleanup["state"] == RenderCleanupState.UNKNOWN or (
+                outcome.outcome == JobOutcome.SUCCESS
+                and _cleanup["state"] != RenderCleanupState.COMPLETE
+            ):
+                raise RuntimeError("render cleanup is unverified")
             if cancel_event.is_set():
                 raise RuntimeError("render timed out or was cancelled")
             if outcome.outcome != JobOutcome.SUCCESS or outcome.return_code != 0:
@@ -101,6 +132,7 @@ def render(input_path, output_dir, timeout=60, runner=None) -> dict:
             )
         result = {
             "status": "success",
+            "render_cleanup_state": _cleanup["state"].value,
             "video": str(videos[0].resolve()),
             "scene": str(scene_path),
             "input_sha256": hashlib.sha256(raw).hexdigest(),
@@ -113,15 +145,27 @@ def render(input_path, output_dir, timeout=60, runner=None) -> dict:
         _write_json(receipt_path, result)
         return result
     except BaseException as exc:
+        if not isinstance(exc, Exception):
+            _cleanup["state"] = RenderCleanupState.UNKNOWN
+        set_cleanup_state(exc, _cleanup["state"])
         error = str(exc) or type(exc).__name__
         failed = {"status": "failed", "error": error, "stage": stage, "log": str(log_path)}
+        failed["render_cleanup_state"] = _cleanup["state"].value
         try:
             log_path.touch(exist_ok=True)
             _write_json(receipt_path, failed)
-        except OSError as receipt_error:
-            raise RuntimeError(
+        except BaseException as receipt_error:
+            if not isinstance(exc, Exception):
+                raise exc from receipt_error
+            if not isinstance(receipt_error, OSError):
+                raise
+            replacement = RuntimeError(
                 "failed at %s: %s; cannot save failure receipt: %s" % (stage, error, receipt_error)
-            ) from exc
+            )
+            set_cleanup_state(replacement, _cleanup["state"])
+            raise replacement from exc
         if not isinstance(exc, Exception):
             raise
-        raise RuntimeError("failed at %s: %s (receipt: %s)" % (stage, error, receipt_path)) from exc
+        replacement = RuntimeError("failed at %s: %s (receipt: %s)" % (stage, error, receipt_path))
+        set_cleanup_state(replacement, _cleanup["state"])
+        raise replacement from exc

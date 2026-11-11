@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+
+from app.render.cleanup import RenderCleanupState
 from scene_production import digest, load_timeline, render
 from app.render.runner import JobResult
 from app.render.aggregation import JobOutcome
@@ -17,7 +19,9 @@ class ProductionTests(unittest.TestCase):
             def run_job(self, job, command, event, log, env):
                 commands.append(command)
                 log("render stderr remains available")
-                return JobResult(job, 1, JobOutcome.FAILED)
+                return JobResult(
+                    job, 1, JobOutcome.FAILED, render_cleanup_state=RenderCleanupState.COMPLETE
+                )
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -59,7 +63,9 @@ class ProductionTests(unittest.TestCase):
     def test_failed_runs_preserved(self):
         class Failed:
             def run_job(self, job, *args):
-                return JobResult(job, 1, JobOutcome.FAILED)
+                return JobResult(
+                    job, 1, JobOutcome.FAILED, render_cleanup_state=RenderCleanupState.COMPLETE
+                )
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -107,7 +113,9 @@ class PipelineTests(unittest.TestCase):
                     (path / "Demo.mp4").write_bytes(
                         fixture.read_bytes() if fixture else b"synthetic video"
                     )
-                return JobResult(job, 0, JobOutcome.SUCCESS)
+                return JobResult(
+                    job, 0, JobOutcome.SUCCESS, render_cleanup_state=RenderCleanupState.COMPLETE
+                )
 
         return Runner()
 

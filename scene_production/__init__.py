@@ -18,6 +18,12 @@ import time
 import tokenize
 
 from app.render.aggregation import JobOutcome
+from app.render.cleanup import (
+    RenderCleanupState,
+    cleanup_state,
+    result_cleanup_state,
+    set_cleanup_state,
+)
 from app.render.command_builder import build_command
 from app.render.diagnostics import DiagnosticTimeline, exception_type
 from app.render.implementation import write_implementation_manifest
@@ -211,6 +217,11 @@ def _write_receipt(run, receipt):
 
 
 def _failure(run, receipt, stage, exc, diagnostics=None):
+    # Establish exception metadata before any diagnostic formatting or persistence.
+    if "render_cleanup_state" in receipt:
+        state = cleanup_state(receipt["render_cleanup_state"])
+        set_cleanup_state(exc, state)
+        exc.receipt_path = str(run / "result.json")
     receipt.update(
         status="failed",
         stage=receipt.get("stage", stage),
@@ -235,6 +246,9 @@ def _failure(run, receipt, stage, exc, diagnostics=None):
     try:
         _write_receipt(run, receipt)
     except BaseException as persistence:
+        if "render_cleanup_state" in receipt:
+            set_cleanup_state(persistence, state)
+            persistence.receipt_path = str(run / "result.json")
         if diagnostics is not None:
             diagnostics.event(
                 "failure_receipt_unavailable", exception_type=exception_type(persistence)
@@ -430,6 +444,46 @@ def render(
     runner=None,
     record_scene_frames=False,
 ):
+    """Render a trusted scene with invocation-local cleanup evidence.
+
+    Evidence concerns the supervised render session, not media inspection tools.
+    No receipt is needed to retain this evidence on an exception.
+    """
+    cleanup = {"state": RenderCleanupState.NOT_STARTED}
+    try:
+        return _render(
+            scene_file,
+            scene,
+            timeline,
+            output_dir,
+            quality,
+            timeout,
+            tool_timeout,
+            cancel_event,
+            runner,
+            record_scene_frames,
+            cleanup,
+        )
+    except BaseException as exc:
+        if isinstance(exc, (_ProductionInterrupted, KeyboardInterrupt, SystemExit)):
+            cleanup["state"] = RenderCleanupState.UNKNOWN
+        set_cleanup_state(exc, cleanup["state"])
+        raise
+
+
+def _render(
+    scene_file,
+    scene,
+    timeline,
+    output_dir,
+    quality="qm",
+    timeout=120,
+    tool_timeout=30,
+    cancel_event=None,
+    runner=None,
+    record_scene_frames=False,
+    _cleanup=None,
+):
     """Return success only after machine inspection; failures retain result.json."""
     if type(record_scene_frames) is not bool:
         raise ValueError("record_scene_frames must be boolean")
@@ -455,7 +509,11 @@ def render(
     root = Path(output_dir).resolve()
     root.mkdir(parents=True, exist_ok=True)
     run = Path(tempfile.mkdtemp(prefix="scene-", dir=root))
-    receipt = {"status": "failed", "run_dir": str(run)}
+    receipt = {
+        "status": "failed",
+        "run_dir": str(run),
+        "render_cleanup_state": _cleanup["state"].value,
+    }
     with DiagnosticTimeline(
         run / "diagnostics.jsonl", context={"operation": "render", "run_id": run.name}
     ) as diagnostics:
@@ -514,9 +572,20 @@ def render(
                 with os.fdopen(descriptor, "w", encoding="utf-8", buffering=1) as log:
                     timer.start()
                     try:
-                        outcome = (runner or RenderRunner(terminate_timeout=1)).run_job(
-                            job, command, event, lambda line: log.write(str(line) + "\n"), env
-                        )
+                        _cleanup["state"] = RenderCleanupState.UNKNOWN
+                        receipt["render_cleanup_state"] = _cleanup["state"].value
+                        try:
+                            outcome = (runner or RenderRunner(terminate_timeout=1)).run_job(
+                                job, command, event, lambda line: log.write(str(line) + "\n"), env
+                            )
+                        except BaseException as exc:
+                            _cleanup["state"] = cleanup_state(
+                                getattr(exc, "render_cleanup_state", None)
+                            )
+                            receipt["render_cleanup_state"] = _cleanup["state"].value
+                            raise
+                        _cleanup["state"] = result_cleanup_state(outcome)
+                        receipt["render_cleanup_state"] = _cleanup["state"].value
                         with completion_lock:
                             completed_at = time.monotonic()
                             cancelled_at_completion = event.is_set()
@@ -538,6 +607,7 @@ def render(
                     "render_result",
                     outcome=outcome.outcome.value,
                     return_code=outcome.return_code,
+                    render_cleanup_state=_cleanup["state"].value,
                     leader_exit_observed_before_deadline=exit_before_deadline,
                 )
                 if timed_out or (cancelled_at_completion and deadline_fired_at is None):
@@ -569,6 +639,9 @@ def render(
                     if hint:
                         message += "\nfont hint (from render log): " + hint
                     raise RuntimeError(message)
+                if _cleanup["state"] != RenderCleanupState.COMPLETE:
+                    receipt["failure_reason"] = "render_failed"
+                    raise RuntimeError("render session cleanup is unverified")
             with _production_phase(receipt, diagnostics, "provenance"):
                 if source.read_bytes() != raw_source:
                     raise RuntimeError("source changed during render")
@@ -624,6 +697,9 @@ def render(
                 receipt.pop("stage", None)
                 _write_receipt(run, receipt)
         except BaseException as exc:
+            if isinstance(exc, (_ProductionInterrupted, KeyboardInterrupt, SystemExit)):
+                _cleanup["state"] = RenderCleanupState.UNKNOWN
+                receipt["render_cleanup_state"] = _cleanup["state"].value
             _failure(run, receipt, diagnostics.last_phase or "prepare", exc, diagnostics)
             raise
         diagnostics.event("production_finished")

@@ -352,3 +352,21 @@ Recovery tests cover audit/CAS rollback and races, stale launch rejection,
 same-boot and unavailable-evidence refusal, injected host/boot transitions,
 idempotent audit queries, and manual lease renewal across CLI processes.
 Fake subprocess tests are transport tests, not real-video quality acceptance.
+
+### Cleanup uncertainty at the scheduling boundary
+
+The scheduler requires explicit `render_cleanup_state=not_started` or `complete`
+for failed/1 render terminals, and `complete` plus all existing byte checks for
+succeeded/0. Legacy render terminals without this evidence remain readable by the
+pure protocol reader but are classified unknown by the scheduler, with
+`cleanup_evidence_missing`. They gain no artifacts/verification claim and are not
+retroactively rewritten as safe. Contradictory or invalid protocol also fails
+closed.
+
+A correlated cleanup-unknown terminal is validated against the observed agent
+exit, attempt state and journal and retained as unknown, not treated as transport
+corruption. The wrapper can have exited normally while the render session remains
+unverified. Read-only reconciliation preserves unknown. The render slot remains
+held, and dependents remain blocked. Existing fenced finish/eligibility rules,
+launch gates and audited abandonment proofs are unchanged; wrapper exit, missing
+PIDs, operator assertions and same-boot scans are not new release proofs.

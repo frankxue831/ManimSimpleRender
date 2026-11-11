@@ -157,7 +157,7 @@ jobs:
           python-version: "3.12"
 
       - name: Windows render process supervision (no application dependencies)
-        run: python -m unittest tests.test_runner
+        run: python -m unittest tests.test_runner tests.test_render_cleanup_state tests.test_production_cleanup_state
 
   package:
     runs-on: ubuntu-latest

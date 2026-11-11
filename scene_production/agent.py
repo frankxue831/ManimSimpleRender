@@ -19,6 +19,7 @@ import threading
 import time
 import traceback
 
+from app.render.cleanup import RenderCleanupState, cleanup_state
 from app.render.diagnostics import DiagnosticTimeline, utc_timestamp
 
 from . import _ProductionInterrupted, _font_failure_hint, digest, pairs
@@ -133,7 +134,9 @@ def describe_protocol():
             "143": "terminated",
         },
         "completion_rule": "Require process exit 0 and exactly one terminal succeeded event with "
-        "the expected run_token. A receipt status is never a liveness signal.",
+        "the expected run_token. Render success also requires render_cleanup_state=complete. "
+        "A receipt status is never a liveness signal.",
+        "render_cleanup_states": ["not_started", "complete", "unknown"],
         "recovery_rule": "Missing terminal, interrupted transport, or stale running state means "
         "unknown. Inspect ownership and processes; never automatically retry.",
         "trust": "Trusted scene code/toolchain only; no sandbox or authorization substitute. "
@@ -249,6 +252,11 @@ def _verified_result(result, attempt, operation):
         raise ValueError("API did not return success")
     if result.get("operation", "render") != ("render" if operation == "render" else "reinspect"):
         raise ValueError("wrong operation")
+    if (
+        operation == "render"
+        and cleanup_state(result.get("render_cleanup_state")) != RenderCleanupState.COMPLETE
+    ):
+        raise ValueError("render cleanup is not complete")
     run = _run_root(result["run_dir"], attempt)
     receipt = _regular(str(run / "result.json"), run)
     before = digest(receipt)
@@ -347,6 +355,15 @@ def main(argv=None):
     timeline = None
     stream, attempt, operation, events = sys.stdout, None, None, []
     code, status, phase, payload = 1, "failed", "arguments", {}
+    render_state = RenderCleanupState.NOT_STARTED
+
+    def cleanup_fields():
+        if operation != "render":
+            return {}
+        fields = {"render_cleanup_state": render_state.value}
+        if render_state == RenderCleanupState.UNKNOWN:
+            fields["process_cleanup_verified"] = False
+        return fields
 
     def event(kind, **fields):
         return dict(
@@ -400,7 +417,30 @@ def main(argv=None):
             with _interrupts(), _private_output(attempt / "api.log"):
                 try:
                     with timeline.phase("operation"):
-                        result = _call_api(args, attempt)
+                        if operation == "render":
+                            render_state = RenderCleanupState.UNKNOWN
+                        try:
+                            result = _call_api(args, attempt)
+                        except BaseException as exc:
+                            if operation == "render":
+                                render_state = cleanup_state(
+                                    getattr(exc, "render_cleanup_state", None)
+                                )
+                            raise
+                        if operation == "render":
+                            render_state = cleanup_state(
+                                result.get("render_cleanup_state")
+                                if isinstance(result, dict)
+                                else None
+                            )
+                            if (
+                                isinstance(result, dict)
+                                and result.get("status") == "success"
+                                and render_state == RenderCleanupState.NOT_STARTED
+                            ):
+                                render_state = RenderCleanupState.UNKNOWN
+                            if render_state == RenderCleanupState.UNKNOWN:
+                                raise RuntimeError("render cleanup is unverified")
                     phase = "verification"
                     with timeline.phase("verification"):
                         artifacts = _verified_result(result, attempt, operation)
@@ -425,6 +465,8 @@ def main(argv=None):
     except (_Interrupted, KeyboardInterrupt, SystemExit) as exc:
         code = 128 + getattr(exc, "signum", signal.SIGINT)
         status = "unknown"
+        if operation == "render":
+            render_state = RenderCleanupState.UNKNOWN
         payload = {
             "error": {"code": "interrupted"},
             "process_cleanup_verified": False,
@@ -444,6 +486,12 @@ def main(argv=None):
             error = "input_or_tool_missing"
         elif isinstance(exc, ValueError):
             error = "invalid_input"
+        if (
+            operation == "render"
+            and render_state == RenderCleanupState.UNKNOWN
+            and phase not in ("persistence", "transport")
+        ):
+            code, status, error = 3, "unknown", "render_cleanup_unverified"
         payload = {"error": {"code": error}, "diagnostics": _diagnostics(attempt, exc)}
     # This sidecar covers the API and retained-byte verification, not the final
     # protocol commit/delivery below. Logging cannot change the API outcome.
@@ -453,6 +501,7 @@ def main(argv=None):
         payload.setdefault("diagnostics", _diagnostics(attempt))[
             "timeline_write_failed"
         ] = timeline.failed
+    payload.update(cleanup_fields())
     terminal = event("terminal", status=status, exit_code=code, **payload)
     try:
         persist(terminal)
@@ -464,6 +513,7 @@ def main(argv=None):
             status="unknown",
             exit_code=code,
             error={"code": "persistence_failed"},
+            **cleanup_fields(),
             diagnostics=_diagnostics(attempt),
         )
         # Best-effort correction if only one of the two atomic replacements failed.
@@ -481,6 +531,7 @@ def main(argv=None):
             status="unknown",
             exit_code=3,
             error={"code": "transport_failed"},
+            **cleanup_fields(),
             diagnostics=_diagnostics(attempt),
         )
         try:

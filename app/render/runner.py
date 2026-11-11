@@ -15,6 +15,7 @@ headless and reusable outside the GUI.
 from dataclasses import dataclass
 
 from app.render.aggregation import JobOutcome
+from app.render.cleanup import RenderCleanupState, cleanup_state
 from app.render.process_session import _PostSpawnSetupError, _ProcessSession
 
 __all__ = [
@@ -46,6 +47,7 @@ class JobResult:
     # Monotonic observation before post-exit supervision, when available.
     # This is diagnostic metadata, never proof of process-tree cleanup.
     leader_exit_observed_at: object = None
+    render_cleanup_state: RenderCleanupState = RenderCleanupState.UNKNOWN
 
 
 class RenderRunner:
@@ -68,12 +70,28 @@ class RenderRunner:
             )
         except FileNotFoundError as exc:
             return JobResult(
-                job, None, JobOutcome.MANIM_NOT_FOUND, f"render executable not found: {exc}"
+                job,
+                None,
+                JobOutcome.MANIM_NOT_FOUND,
+                f"render executable not found: {exc}",
+                render_cleanup_state=cleanup_state(getattr(exc, "render_cleanup_state", None)),
             )
         except _PostSpawnSetupError as exc:
-            return JobResult(job, None, JobOutcome.FAILED, f"post-spawn setup failed: {exc}")
+            return JobResult(
+                job,
+                None,
+                JobOutcome.FAILED,
+                f"post-spawn setup failed: {exc}",
+                render_cleanup_state=cleanup_state(getattr(exc, "render_cleanup_state", None)),
+            )
         except Exception as exc:
-            return JobResult(job, None, JobOutcome.FAILED, f"could not start render: {exc}")
+            return JobResult(
+                job,
+                None,
+                JobOutcome.FAILED,
+                f"could not start render: {exc}",
+                render_cleanup_state=cleanup_state(getattr(exc, "render_cleanup_state", None)),
+            )
 
         try:
             return_code, cancelled, diagnostic = session.finish(cancel_event, on_log)
@@ -84,6 +102,7 @@ class RenderRunner:
                 JobOutcome.FAILED,
                 f"process supervision failed: {exc}",
                 session.leader_exit_observed_at,
+                cleanup_state(getattr(session, "render_cleanup_state", None)),
             )
 
         if diagnostic:
@@ -94,4 +113,11 @@ class RenderRunner:
             outcome = JobOutcome.SUCCESS
         else:
             outcome = JobOutcome.FAILED
-        return JobResult(job, return_code, outcome, diagnostic, session.leader_exit_observed_at)
+        return JobResult(
+            job,
+            return_code,
+            outcome,
+            diagnostic,
+            session.leader_exit_observed_at,
+            cleanup_state(getattr(session, "render_cleanup_state", None)),
+        )

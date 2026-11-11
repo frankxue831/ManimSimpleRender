@@ -53,6 +53,7 @@ class RealRenderSmokeTests(unittest.TestCase):
             result = RenderRunner().run_job(jobs[0], cmd, cancel_event=None, on_log=logs.append)
             self.assertEqual(result.outcome, JobOutcome.SUCCESS, "\n".join(logs[-15:]))
             self.assertEqual(result.return_code, 0)
+            self.assertEqual(result.render_cleanup_state, "complete")
             path = output_assertions.media_output_path(out, "smoke.py", "SmokeScene", "480p15")
             output_assertions.assert_nonempty_video(self, path)
 

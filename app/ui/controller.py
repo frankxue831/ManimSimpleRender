@@ -272,13 +272,17 @@ class RenderController(QObject):
         self._pending_summary = None
         self._worker = None
         self._shutdown_started = False
-        self._state = "idle"
+        blocked = summary is None or getattr(summary, "cleanup_unknown", False)
+        self._state = "cleanup_unknown" if blocked else "idle"
         self._view.reset_progress()  # finalize the bar (BL-22) + restore determinate (BL-24)
         self._view.set_controls_enabled(True)
-        self._view.set_rerun_enabled(bool(self._view.rerunnable_scene_keys()))
-        self._view.set_button_mode("start")
+        self._view.set_rerun_enabled(not blocked and bool(self._view.rerunnable_scene_keys()))
+        self._view.set_button_mode("cleanup_unknown" if blocked else "start")
         if summary is None:
-            self._view.set_status("Render worker stopped without a summary.", level="error")
+            self._view.set_status(
+                "Render cleanup is unverified; further renders are blocked pending investigation.",
+                level="error",
+            )
         else:
             self._show_summary(summary)
         if self._close_pending:
@@ -569,6 +573,8 @@ class RenderController(QObject):
         self._view.set_status(f"Copied {len(commands)} command(s) to the clipboard.")
 
     def _on_rerun_failed(self):
+        if self._state != "idle":
+            return
         blocked = self._discovery_block_reason()
         if blocked:
             self._view.set_status(blocked, level="error")

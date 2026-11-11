@@ -238,6 +238,10 @@ class MainView(QMainWindow):
             self.primary_button.setText("Cancelling...")
             self.primary_button.setEnabled(False)
             theme.set_button_state(self.primary_button, "cancel")
+        elif mode == "cleanup_unknown":
+            self.primary_button.setText("Cleanup unverified")
+            self.primary_button.setEnabled(False)
+            theme.set_button_state(self.primary_button, "cancel")
         elif mode == "finishing":
             # Job accounting is final but the worker thread has not stopped yet:
             # there is nothing left to cancel and nothing may be started.

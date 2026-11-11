@@ -10,6 +10,8 @@ import signal
 import subprocess
 import threading
 import unittest
+
+from app.render.cleanup import RenderCleanupState
 from unittest.mock import Mock, patch
 
 from app.render.aggregation import JobOutcome
@@ -103,7 +105,13 @@ class ProductionDiagnosticsTests(unittest.TestCase):
     def test_missing_executable_retains_runner_diagnostic_privately(self):
         class Missing:
             def run_job(self, job, *args):
-                return JobResult(job, None, JobOutcome.MANIM_NOT_FOUND, "PRIVATE_LAUNCH_ERROR")
+                return JobResult(
+                    job,
+                    None,
+                    JobOutcome.MANIM_NOT_FOUND,
+                    "PRIVATE_LAUNCH_ERROR",
+                    render_cleanup_state=RenderCleanupState.NOT_STARTED,
+                )
 
         with self.assertRaises(RuntimeError):
             self.invoke(runner=Missing())
@@ -170,6 +178,7 @@ class ProductionDiagnosticsTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "cleanup timed out"):
                 self.invoke(runner=RenderRunner())
         self.assertEqual(self.receipt()["failure_reason"], "render_cleanup_timeout")
+        self.assertEqual(self.receipt()["render_cleanup_state"], "complete")
         self.assertEqual(self.receipt()["status"], "failed")
         result = next(item for item in self.events() if item["event"] == "render_result")
         self.assertEqual(result["outcome"], "success")

@@ -52,6 +52,7 @@ class _FakeResult:
         self.outcome = outcome
         self.return_code = 0 if outcome == JobOutcome.SUCCESS else 1
         self.diagnostic = ""
+        self.render_cleanup_state = "complete"
 
 
 class _FakeRunner:
@@ -104,6 +105,64 @@ class AdapterOrchestrationTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.output = str(self.root / "output.mp4")
         self.logs = []
+
+    def test_uncertain_results_and_exceptions_do_not_publish(self):
+        for state in (None, "invalid", "unknown", "not_started", "complete"):
+            for raises, outcome, code in (
+                (False, JobOutcome.SUCCESS, 0),
+                (False, JobOutcome.SUCCESS, None),
+                (False, JobOutcome.FAILED, 1),
+                (False, JobOutcome.FAILED, None),
+                (False, JobOutcome.MANIM_NOT_FOUND, None),
+                (True, JobOutcome.FAILED, None),
+            ):
+                with self.subTest(state=state, raises=raises, outcome=outcome, code=code):
+                    result = _FakeResult(outcome)
+                    result.return_code = code
+                    result.render_cleanup_state = state
+                    error = RuntimeError("runner failed")
+                    error.render_cleanup_state = state
+                    from explainer.render import adapter
+                    import shutil
+
+                    workdir = self.root / (str(state) + str(raises))
+                    workdir.mkdir()
+                    with (
+                        patch.object(adapter, "verify_storyboard", return_value=[]),
+                        patch.object(adapter, "manim_available", return_value=True),
+                        patch.object(adapter.tempfile, "mkdtemp", return_value=str(workdir)),
+                        patch.object(adapter, "_diagnostic_directory", return_value=None),
+                        patch.object(adapter, "RenderRunner") as runner,
+                        patch.object(adapter.shutil, "copyfile") as publish,
+                        patch("subprocess.Popen", side_effect=AssertionError("no child")),
+                        patch("subprocess.run", side_effect=AssertionError("no command")),
+                        patch("os.kill", side_effect=AssertionError("no signal")),
+                        patch("os.killpg", side_effect=AssertionError("no signal"), create=True),
+                    ):
+                        runner.return_value.run_job.side_effect = error if raises else None
+                        runner.return_value.run_job.return_value = result
+                        with self.assertRaises(Exception) as caught:
+                            render_storyboard(EXAMPLE, self.output, on_log=self.logs.append)
+                        expected = (
+                            state
+                            if state == "complete"
+                            or (
+                                state == "not_started"
+                                and (
+                                    raises
+                                    or (
+                                        outcome in (JobOutcome.FAILED, JobOutcome.MANIM_NOT_FOUND)
+                                        and code is None
+                                    )
+                                )
+                            )
+                            else "unknown"
+                        )
+                        self.assertEqual(caught.exception.render_cleanup_state, expected)
+                        publish.assert_not_called()
+                        if expected == "unknown":
+                            self.assertTrue(workdir.is_dir())
+                    shutil.rmtree(workdir, ignore_errors=True)
 
     def diagnostic_directory(self):
         directories = list((self.root / ".explainer-logs").glob("run-*"))
