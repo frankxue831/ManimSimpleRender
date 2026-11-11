@@ -28,6 +28,15 @@ markers. Dependencies reference earlier sections. These are author-maintained
 mappings, not automatic semantic or dependency inference. The timeline remains
 inspection configuration, not an animation language.
 
+Every segment must include `captions` as a list of nonblank strings. Use
+`"captions": []` when the author declares no key captions for that section,
+including a caption-free scene; do not invent placeholder captions. Empty and
+nonempty caption lists may coexist in a manifest. The declaration is retained
+in the snapshot's manifest copy and returned unchanged by `locate`. It is not
+evidence that rendered text is absent, present or legible. `objects` must still
+be a nonempty list, brief `sources` and `pitfalls` must remain nonempty, and
+dependency, source and timeline guards are unchanged.
+
 Minimal manifest shape (one section):
 
 ```json

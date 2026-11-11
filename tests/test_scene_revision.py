@@ -82,6 +82,42 @@ class RevisionTests(unittest.TestCase):
     def baseline(self):
         return rev.capture(self.manifest, self.receipt, self.root / "versions")
 
+    def test_caption_free_capture_locate_and_apply_preserve_empty_declaration(self):
+        m = json.loads(self.manifest.read_text())
+        for segment in m["segments"]:
+            segment["captions"] = []
+        self.manifest.write_text(json.dumps(m))
+        base = self.baseline()
+        snapshot = json.loads(Path(base).read_text())
+        retained = Path(base).parent / snapshot["files"][snapshot["manifest"]]["copy"]
+        self.assertEqual(json.loads(retained.read_text())["segments"], m["segments"])
+        plan = rev.locate(base, "target", "change b")
+        self.assertEqual(plan["context"]["captions"], [])
+        self.assertEqual(plan["context"]["objects"], ["object"])
+        self.assertEqual(plan["context"]["depends_on"], [])
+        original = self.source.read_text()
+        rev.apply(plan, {"target": "b=3\n"})
+        self.assertEqual(self.source.read_text(), original.replace("b=2", "b=3"))
+        rev.check_scope(base, ["target"])
+
+    def test_mixed_caption_declarations_are_preserved_in_locate(self):
+        m = json.loads(self.manifest.read_text())
+        m["segments"][0]["captions"] = []
+        self.manifest.write_text(json.dumps(m))
+        base = self.baseline()
+        self.assertEqual(rev.locate(base, "intro", "change")["context"]["captions"], [])
+        self.assertEqual(rev.locate(base, "target", "change")["context"]["captions"], ["caption"])
+
+    def test_caption_free_capture_still_checks_recorded_source_identity(self):
+        m = json.loads(self.manifest.read_text())
+        for segment in m["segments"]:
+            segment["captions"] = []
+        self.manifest.write_text(json.dumps(m))
+        self.source.write_text(self.source.read_text().replace("b=2", "b=3"))
+        with self.assertRaisesRegex(ValueError, "inputs disagree"):
+            self.baseline()
+        self.assertFalse((self.root / "versions").exists())
+
     def test_target_lookup_apply_stale_and_unexpected_scope(self):
         base = self.baseline()
         with self.assertRaisesRegex(ValueError, "target"):
