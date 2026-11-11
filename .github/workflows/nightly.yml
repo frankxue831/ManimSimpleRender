@@ -2,7 +2,8 @@ name: Nightly (real render)
 
 # Tier B of the automation harness: install the FULL render toolchain (manim +
 # ffmpeg + cairo/pango + PyQt5) and run every e2e tier, including the real-render
-# smoke that the per-PR CI skips. Scheduled nightly + manually dispatchable.
+# smoke also exercised by the per-PR README quickstart job. Scheduled nightly +
+# manually dispatchable.
 on:
   schedule:
     - cron: "0 6 * * *"

@@ -3,9 +3,10 @@
 Renders a minimal scene with REAL manim + ffmpeg via the production build_command
 (default base = manim_base_command) and the real RenderRunner -- no shim -- and
 asserts an actual non-empty .mp4 lands at manim's real output path. Gated on manim +
-ffmpeg, so it skips cleanly where they are absent (the per-PR CI / bare python3) and
-runs on the nightly (Tier B) workflow and a healthy dev machine. Uses a Square + a
-short wait, so no LaTeX is required.
+ffmpeg, so it skips cleanly where they are absent. It runs in the per-PR
+README quickstart job after installing the full render dependencies, as well as
+in the nightly workflow and on a healthy dev machine. Uses a Square + a short
+wait, so no LaTeX is required.
 Run: .venv/bin/python -m unittest tests.e2e.test_real_render_smoke
 """
 

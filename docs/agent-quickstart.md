@@ -4,7 +4,9 @@ Use `scene_production.agent` to render a trusted ordinary Manim Scene or reinspe
 a recorded video from a single agent. It wraps the existing production APIs with
 JSONL events and retained artifacts. Start here before adding local task coordination.
 The [documentation index](README.md) also covers concept JSON drafts and source-citing
-Explainer storyboards.
+Explainer storyboards. For a runnable render, record, fix and compare loop, use the
+[silent review and revision walkthrough](silent-review-example.md). Its fixture
+finding and machine audit do not replace an actual editorial review.
 
 ## Prepare the environment and inputs
 
@@ -74,6 +76,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+from scene_production.completion import read_completion
+
 invocation = {
     "args": [
         sys.executable, "-m", "scene_production.agent", "render",
@@ -86,29 +90,30 @@ invocation = {
     "env": None,
     "shell": False,
 }
-result = subprocess.run(**invocation, capture_output=True, text=True, check=False)
-# Malformed or truncated JSONL must stop processing; never guess a result or retry.
-events = [json.loads(line) for line in result.stdout.splitlines()]
-started = [event for event in events if event.get("event") == "started"]
-terminal = [event for event in events if event.get("event") == "terminal"]
-if len(started) != 1 or len(terminal) != 1:
-    raise RuntimeError("No confirmed success; inspect this invocation before further work")
-run_token = started[0]["run_token"]  # Retain outside the attempt if needed later.
-if (
-    result.returncode != 0
-    or terminal[0].get("status") != "succeeded"
-    or any(event.get("run_token") != run_token for event in events)
-):
-    raise RuntimeError("No confirmed success; inspect terminal status and diagnostics")
-artifacts = terminal[0]["artifacts"]
+result = subprocess.run(**invocation, capture_output=True, check=False)
+# Keep the stdout/stderr capture and observed returncode for this invocation.
+completion = read_completion(
+    result.stdout, result.returncode, expected_operation="render"
+)
+if completion.status != "succeeded":
+    raise RuntimeError(
+        f"No confirmed success: {completion.status} ({completion.reason}); investigate, do not retry"
+    )
+run_token = completion.run_token  # Captured from this stream's actual started event.
+# Retain the token outside the attempt if needed for later correlation.
+artifacts = completion.terminal["artifacts"]
 receipt = json.loads(Path(artifacts["receipt"]["path"]).read_text(encoding="utf-8"))
 print("Video:", artifacts["video"]["path"])
 for frame in receipt["frames"]:
     print("Review frame:", frame["path"])
 ```
 
-This example accepts success only after exit 0, exactly one successful terminal and
-a matching invocation token. The [agent protocol](scene-agent.md#events-and-completion)
+This example accepts success only after exit 0, exactly one `started` followed by
+one successful terminal, and matching operation and invocation token. The pure
+reader rejects incomplete JSONL, duplicate keys and ambiguous protocol evidence
+as unknown. It checks the reported manifest's shape but does not read files or
+rehash artifacts. Reading the receipt above is for locating review frames, not
+another completion or integrity check. The [agent protocol](scene-agent.md#events-and-completion)
 defines failed and unknown outcomes, including usage failures that emit no `started`.
 Keep the recorded outcome when handling them; the example's exception only prevents
 unconfirmed success from being consumed. Do not automatically retry an unknown attempt.
@@ -150,6 +155,35 @@ This creates a new attempt and does not run Manim. Supply the original render's
 receipt, not `attempt.json` or an earlier reinspection receipt. Source changes need
 a fresh render; [scene revision](scene-revision.md) adds explicit edit scope,
 non-target frame comparisons and retained rollback versions for silent productions.
+
+To retain explicit feedback against delivered video bytes, use
+[editorial review](editorial-review.md). The [silent review walkthrough](silent-review-example.md)
+connects a baseline render, recorded finding, targeted source edit, full candidate
+render, non-target audit and a fresh candidate record. The candidate remains
+`needs_review`: an author's `--addresses F1` claim does not resolve finding `F1`.
+
+## Interpret each command's result
+
+Exit codes are specific to each interface; there is no shared approval code:
+
+- `scene_production.agent render` / `inspect`: exit 0 is only part of the
+  [completion rule](scene-agent.md#events-and-completion). Require matching
+  successful event evidence as above. Exit 1 reports failure; exit 2 is a usage
+  failure; exit 3, 130 or 143 reports an unknown outcome. Investigate incomplete
+  or conflicting transport evidence rather than assuming failure is safe to retry.
+- `scene_production.editorial record` / `compare`: exit 0 means the requested
+  operation completed, even for `changes_requested`, `needs_review`, changed
+  candidate bytes or false integrity flags. Read the JSON; handled input/file
+  errors and usage errors exit 2. See [editorial command results](editorial-review.md#command-results-and-exit-codes).
+- `scene_production.revision audit`: exit 0 means unchanged non-target machine
+  layers; exit 2 with a JSON `needs_review` result means the audit needs review.
+  Handled invalid evidence/guard failures exit 1; argument parsing errors also
+  exit 2 but do not produce an audit result. See [revision evidence](scene-revision.md#optional-observed-frame-evidence).
+- `examples.silent_review.run`: exit 0 means the example completed with an
+  unchanged non-target audit. Exit 2 with a result means the completed audit
+  needs review; argument parsing errors also exit 2. An uncaught workflow exception
+  exits 1 and retains existing output for investigation. Even at exit 0,
+  its fixture assessment remains `needs_review`, never approval.
 
 ## Add optional capabilities
 

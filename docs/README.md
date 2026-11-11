@@ -38,6 +38,7 @@ facts and audio separately before claiming that an explanation is ready.
 - [Dynamic Netty and TCP examples](dynamic-examples.md), including font requirements.
 - [Generated diagram motion](diagram-motion.md): supported path and identity rules.
 - [Executable revision example](scene-revision.md#executable-revision-example).
+- [Silent review workflow example](silent-review-example.md): render, revise and retain a candidate for review.
 - [Contributor guide](../AGENTS.md) and [development checks](../README.md#development).
 - [Shared render-core decision](adr/0001-render-core-boundary.md), with subsequent implementation status.
 - [Changelog](../CHANGELOG.md) for released and unreleased capabilities.

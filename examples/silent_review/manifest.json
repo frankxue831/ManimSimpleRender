@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "source": "scene.py",
+  "timeline": "timeline.json",
+  "scene": "SilentReview",
+  "dependencies": [],
+  "brief": {
+    "audience": "developers trying the public review workflow",
+    "goal": "demonstrate a scoped lookup cue edit without implying approval",
+    "sources": ["The authored scene.py fixture in this directory"],
+    "pitfalls": ["An unchanged context section cannot prove the lookup is understandable"]
+  },
+  "segments": [
+    {"id": "context", "captions": ["A lookup selects one row."],
+     "objects": ["context-caption"], "depends_on": []},
+    {"id": "lookup", "captions": ["Result: row 2"],
+     "objects": ["result-caption", "row-1", "row-2", "candidate-row-cue"], "depends_on": []}
+  ]
+}

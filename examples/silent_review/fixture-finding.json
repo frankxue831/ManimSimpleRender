@@ -1,0 +1,13 @@
+{
+  "reviewer": "example-fixture-not-an-independent-reviewer",
+  "scope": "FIXTURE ONLY: authored finding for a workflow demonstration. No playback, visual judgment, audio listening, or audience assessment has been performed by this script.",
+  "decision": "changes_requested",
+  "findings": [{
+    "id": "F1",
+    "section": "lookup",
+    "time_seconds": 1.5,
+    "observed": "FIXTURE: the authored baseline displays a result and two rows without a cue identifying the selected row.",
+    "acceptance_question": "Can a reviewer identify which row was selected, and is the cue clear at normal playback speed?"
+  }],
+  "evidence": []
+}

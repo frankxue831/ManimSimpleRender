@@ -104,6 +104,58 @@ and inspect artifacts before deciding on a new attempt. The adapter never does
 this automatically. Tokens and hashes are integrity/correlation aids; they are
 not authentication, consent, or permission to run code or send files.
 
+### Read a captured invocation
+
+Use the Qt-free, pure reader for a complete stdout capture and the independently
+observed process return code:
+
+```python
+from scene_production.completion import read_completion
+
+completion = read_completion(
+    process_result.stdout,
+    process_result.returncode,
+    expected_operation="render",  # Or "inspect" / "describe".
+)
+if completion.status == "succeeded":
+    artifacts = completion.terminal["artifacts"]  # For render/inspect only.
+    run_token = completion.run_token
+```
+
+`stdout` may be UTF-8 bytes or text. Preserve its final newline; do not call
+`strip()`, drop malformed lines, or concatenate different invocations. Supply
+`None` for `returncode` if exit has not been observed, never the event's own
+`exit_code`. No observed exit means unknown even if stdout claims success.
+
+For render/inspect the reader requires exactly one `started`, then one terminal.
+It captures the token from that **actual started event**, checks that the
+terminal matches it and the expected operation, and checks protocol version,
+field types, outcome/exit-code agreement and success manifest shape. If the
+caller already retained the token when `started` arrived, pass it as
+`expected_token=...` for an additional correlation check. Do not invent a token
+before launch or obtain the expected token from the terminal or a receipt.
+
+`Completion` provides `status`, a fixed diagnostic `reason`, `run_token` when
+available, and `terminal`. A consistent reported failure remains `failed`;
+interruption, persistence and transport failures remain `unknown`. `describe`
+success has only a terminal with `description` and no artifacts. Recognized
+pre-claim failures also have only a terminal. A usage failure has exit 2,
+`error.code: invalid_arguments` and `operation: null`, because parsing never
+completed; this is the only accepted null-operation exception.
+
+Malformed or truncated JSONL, duplicate keys (including nested keys), missing or
+extra events, token/operation mismatches and unexpected exits return `unknown`
+with `terminal=None`. A valid terminal with `status: unknown` is retained, but
+still does not authorize a retry or certify process cleanup. Additional timing
+and diagnostics fields do not establish completion or liveness.
+
+The reader never opens files, reconciles persisted state/journals, rehashes
+artifacts, runs code, retries or creates a new attempt. Its success confirms
+consistent captured protocol evidence, **not that artifact bytes still match
+now**. The terminal's hashes and verification scope remain the producer's
+claims. The separate local handoff runner performs its own durable-state and
+retained-byte verification. Neither path establishes semantic acceptance.
+
 ## Attempt files and privacy
 
 A render/inspect attempt contains:
@@ -163,6 +215,7 @@ pipeline-boundary coverage, not a real Manim/ffmpeg quality certification.
 
 ```sh
 python -m unittest tests.test_production_agent
+python -m unittest tests.test_production_completion
 QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests
 python -m black --check scene_production/agent.py tests/test_production_agent.py
 python -m flake8 scene_production/agent.py tests/test_production_agent.py

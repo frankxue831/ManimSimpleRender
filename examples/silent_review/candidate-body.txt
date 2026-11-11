@@ -1,0 +1,9 @@
+        from manim import Arrow, YELLOW
+
+        self.next_section("lookup")
+        self.clear()
+        self.add(Text("Result: row 2", font_size=34, color=WHITE).move_to([0, 2, 0]))
+        for y in (0.6, -0.6):
+            self.add(Rectangle(width=3, height=0.8, color=BLUE).move_to([0, y, 0]))
+        self.add(Arrow([-3, -0.6, 0], [-1.5, -0.6, 0], color=YELLOW, buff=0.1))
+        hold_until_frame(self, 30)

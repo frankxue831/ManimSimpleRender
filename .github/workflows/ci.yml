@@ -34,10 +34,10 @@ jobs:
           python -m pip install PyQt5==5.15.11 "PyYAML>=6" black==26.5.1 flake8==7.3.0
 
       - name: black --check
-        run: black --check app explainer scene_production tests main.py examples/scenes/netty_eventloop.py examples/scenes/tcp_stream.py examples/scenes/scene_font.py examples/scenes/revision_flow.py examples/revisions/run_flow.py
+        run: black --check app explainer scene_production tests main.py examples/scenes/netty_eventloop.py examples/scenes/tcp_stream.py examples/scenes/scene_font.py examples/scenes/revision_flow.py examples/revisions/run_flow.py examples/silent_review
 
       - name: flake8
-        run: flake8 app explainer scene_production tests main.py examples/scenes/netty_eventloop.py examples/scenes/tcp_stream.py examples/scenes/scene_font.py examples/scenes/revision_flow.py examples/revisions/run_flow.py
+        run: flake8 app explainer scene_production tests main.py examples/scenes/netty_eventloop.py examples/scenes/tcp_stream.py examples/scenes/scene_font.py examples/scenes/revision_flow.py examples/revisions/run_flow.py examples/silent_review
 
       - name: Unit tests (headless)
         env:
@@ -105,6 +105,47 @@ jobs:
         run: |
           source .venv/bin/activate
           python -m unittest tests.explainer_tests.test_code_compat tests.e2e.test_real_render_smoke tests.test_frame_capture_process
+
+      - name: Traced silent revision and review example
+        run: |
+          source .venv/bin/activate
+          python -m examples.silent_review.run --output-dir "$RUNNER_TEMP/silent-review-example"
+          python -c '
+          import json, os, shutil
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"]) / "silent-review-example"
+          result = json.loads((root / "example-result.json").read_text())
+          previous = json.loads((root / "comparison-previous.json").read_text())
+          current = json.loads((root / "comparison-candidate.json").read_text())
+          assert result["audit_status"] == "unchanged_non_target"
+          assert previous["assessment_current"] is False
+          assert previous["candidate_requires_fresh_assessment"] is True
+          assert current["assessment_current"] is True
+          assert current["decision"] == "needs_review"
+          assert current["readiness"] == "not_determined"
+          evidence = Path(os.environ["RUNNER_TEMP"]) / "silent-review-evidence"
+          evidence.mkdir()
+          for name in ("example-result.json", "audit.json", "comparison-previous.json", "comparison-candidate.json"):
+              shutil.copy2(root / name, evidence / name)
+          for name in ("baseline", "candidate"):
+              capture = root / (name + ".stdout.jsonl")
+              shutil.copy2(capture, evidence / capture.name)
+              shutil.copy2(root / (name + ".completion.json"), evidence)
+              terminal = json.loads(capture.read_text().splitlines()[-1])
+              retained = evidence / name
+              retained.mkdir()
+              for key, entry in terminal["artifacts"].items():
+                  source = Path(entry["path"])
+                  shutil.copy2(source, retained / (key + source.suffix))
+          '
+
+      - name: Retain public fixture evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: silent-review-evidence-${{ matrix.python-version }}
+          path: ${{ runner.temp }}/silent-review-evidence/
+          if-no-files-found: error
+          retention-days: 7
 
   test-windows-render-supervision:
     runs-on: windows-latest

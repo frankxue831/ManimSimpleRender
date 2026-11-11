@@ -76,10 +76,18 @@ python -m scene_production.editorial compare --review /absolute/review-2.json \
 
 The new record links the previous review's hash and named finding IDs. Omit
 `--addresses` to link a previous review without naming findings, including a
-prior approval or finding-free assessment. Naming a finding is
-an author assertion that the candidate addresses those findings, not proof they
-are resolved. `compare` exposes the link and reports if the previous record is
-missing or changed. Records are published exclusively through a temporary file
+prior approval or finding-free assessment. Each `--addresses` ID must be unique
+and name a finding in that previous review. It records an **author claim** that
+the candidate addresses the finding, not proof of resolution or a new reviewer
+decision. The link is independent of the new assessment's outstanding `findings`:
+for example, `--addresses F1` can coexist with `F1` in a candidate's `needs_review`
+assessment. Do not remove an outstanding finding merely because it was named in
+`--addresses`; an `approved` assessment still cannot contain outstanding findings.
+The [silent review walkthrough](silent-review-example.md) demonstrates this
+distinction with a fixture finding that remains open after the authored fix.
+
+`compare` exposes the link and reports if the previous record is missing or
+changed. Records are published exclusively through a temporary file
 and a hard link; the output filesystem must support hard links. Keep earlier
 files and artifacts rather than replacing them. If publication succeeds but
 temporary-file cleanup fails, `record` succeeds with a `publication_warning`
@@ -93,3 +101,25 @@ mechanism. The output record and linked files may contain private information.
 
 The existing revision audit is **silent-only**. Linking a narrated preview to an
 editorial review does not extend the audit to audio or imply audio was heard.
+
+## Command results and exit codes
+
+These are the editorial helper's CLI semantics, not the agent completion or
+revision-audit protocol:
+
+- `record` exits 0 after publishing a record, regardless of its editorial
+  decision. A reported `publication_warning` means publication succeeded but
+  temporary-file cleanup failed; retain the warning and inspect the named path.
+- `compare` exits 0 after producing a comparison, even when candidate bytes have
+  changed, the decision is `changes_requested` or `needs_review`, or evidence/
+  previous-review integrity flags are false. Read `assessment_current`,
+  `candidate_requires_fresh_assessment`, `decision`, `findings` and the integrity
+  flags separately. `readiness` remains `not_determined`.
+- Both commands exit 2 for argument parsing errors or handled input, validation
+  and file errors. These diagnostics are written to stderr rather than emitted
+  as a successful JSON result. Exit 2 here does **not** mean an editorial
+  `changes_requested` decision or a completed audit that needs review.
+
+The helper does not map review decisions to pass/fail exit codes. For the
+command-specific render and revision rules, see the
+[agent quick start](agent-quickstart.md#interpret-each-commands-result).

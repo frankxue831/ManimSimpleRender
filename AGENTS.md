@@ -4,7 +4,7 @@ This file provides guidance to coding agents (Codex, Claude Code, and others) wo
 
 ## Project Overview
 
-ManimSimpleRender holds two products. The Explainer Engine (`explainer/`) is a CLI that compiles storyboard YAML through a citation gate into deterministic Manim codegen and a narrated video. The desktop GUI (`app/`) is a PyQt5 application that discovers the Manim scenes in a folder of Python files and batch-renders the ones the user selects.
+ManimSimpleRender provides a desktop batch renderer and command-line workflows for source-citing explainers, silent concept drafts and checked ordinary Scene productions. The Explainer Engine (`explainer/`) compiles storyboard YAML through a citation gate into deterministic Manim codegen and a narrated video. The desktop GUI (`app/`) is a PyQt5 application that discovers the Manim scenes in a folder of Python files and batch-renders the ones the user selects. `concept_render/` produces silent drafts from concept JSON; `scene_production/` renders trusted ordinary scenes and provides inspection, agent completion, revision and editorial-review helpers.
 
 These workflows share one Qt-free render core (`app/render`), per `docs/adr/0001-render-core-boundary.md`. `explainer/` may import only `app.render.*` (never `app.render.worker`); nothing imports back from it. The boundary is enforced by `tests/test_architecture.py`. `concept_render/`, a smaller source-checkout-only CLI for silent concept drafts (`docs/concept-render.md`), also imports `app.render`; `tests/test_architecture.py` does not scan it. `scene_production/` renders trusted ordinary scenes and checks media; its Qt-free imports are guarded by the same test file.
 
@@ -27,7 +27,7 @@ Services never import the UI; only the render worker imports Qt.
 - **app/ui/**: `main_view.py` (passive window), `sections.py`, `theme.py` + `theme.qss` (external dark theme), `controller.py` (state machine + QSettings).
 - **app/validation.py**: Pure pre-render validation.
 - **explainer/**: `storyboard/` (YAML IR + loader), `cite/` (citation gate: checks that the cited lines contain the evidence the storyboard declares, as whole words, with evidence on the first and last cited lines; if the storyboard names a commit, also that HEAD matches it and the tree is clean unless `allow_dirty`), `codegen/` (deterministic Manim scene emission, diagram canvas), `plan/` (LLM planner drafting storyboards from real code; providers behind a fake-able protocol), `render/adapter.py` (render integration into `app.render`; the CLI also imports shared quality helpers), `cli.py` (`explainer verify|render|plan`).
-- **tests/**: Headless unit tests plus `tests/e2e/` (fake-manim GUI/worker tiers + a real-render smoke that CI runs nightly), `tests/explainer_tests/`, `tests/support/` (shared fixtures), and `tests/test_architecture.py` (executable ADR 0001 boundary).
+- **tests/**: Headless unit tests plus `tests/e2e/` (fake-manim GUI/worker tiers + a real-render smoke run in per-PR and nightly CI), `tests/explainer_tests/`, `tests/support/` (shared fixtures), and `tests/test_architecture.py` (executable ADR 0001 boundary).
 
 ## Key Components
 
@@ -106,7 +106,7 @@ QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests
 black --check app explainer scene_production tests main.py
 flake8 app explainer scene_production tests main.py
 ```
-Fast CI (`.github/workflows/ci.yml`) runs headless tests on py3.12 + py3.13 without manim installed; checks needing unavailable render dependencies skip. Its formatting and linting steps also include the selected example paths listed in the README. The nightly workflow installs the full render toolchain and runs the real-render e2e smoke.
+The fast `test` and `e2e-pure` jobs in `.github/workflows/ci.yml` run headless tests on Python 3.12 + 3.13 without Manim installed; checks needing unavailable render dependencies skip in those jobs. Formatting and linting also include the selected example paths listed in the README. The same per-PR workflow has a `readme-quickstart` job on both Python versions that installs the full Explainer toolchain and runs real-Manim compatibility, video/voiceover smoke, frame-tracing and the traced silent review example, retaining its public fixture evidence. Voiceover uses local audio, not network TTS. The nightly workflow separately installs the full GUI/render stack and runs all e2e tiers. Passing machine checks does not establish visual or editorial acceptance.
 
 ### Explainer CLI
 ```bash
@@ -129,6 +129,8 @@ Example storyboard: `examples/evidence-budget.story.yaml` (cites this repo's own
 
 - `app/`: Application package — `bootstrap.py`, `config/`, `environment/`, `scenes/`, `render/`, `ui/`, `validation.py`
 - `explainer/`: The CLI vertical — `storyboard/`, `cite/`, `codegen/`, `plan/`, `render/`, `cli.py`
+- `concept_render/`: Source-checkout-only concept JSON to silent Scene/video workflow
+- `scene_production/`: Trusted Scene production, inspection, agent completion, revision, editorial review and opt-in sidecar/handoff helpers
 - `tests/`: Headless unit tests. Run: `python -m unittest discover -s tests` (the window smoke test needs `QT_QPA_PLATFORM=offscreen`)
 - `docs/`: current guides and navigation in `README.md`; `adr/` holds architecture decisions, and `archive/` holds historical plans, experiments and reviews
 - `examples/`: Explainer storyboard examples (e.g., `evidence-budget.story.yaml`)
