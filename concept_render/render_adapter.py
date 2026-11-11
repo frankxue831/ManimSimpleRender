@@ -90,6 +90,10 @@ def _render(input_path, output_dir, timeout, runner, _cleanup):
                     )
                     raise
                 _cleanup["state"] = result_cleanup_state(outcome)
+                # Persist supervision details before the cleanup/publication gate.
+                # Unknown cleanup is exactly when an operator needs this evidence.
+                if getattr(outcome, "diagnostic", ""):
+                    on_log(outcome.diagnostic)
             finally:
                 timer.cancel()
                 if timer.ident is not None:

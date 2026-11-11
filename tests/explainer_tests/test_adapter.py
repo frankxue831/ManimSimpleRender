@@ -164,6 +164,63 @@ class AdapterOrchestrationTests(unittest.TestCase):
                             self.assertTrue(workdir.is_dir())
                     shutil.rmtree(workdir, ignore_errors=True)
 
+    def test_unknown_cleanup_keeps_diagnostic_and_result_event_without_publication(self):
+        from explainer.render import adapter
+
+        for outcome in (JobOutcome.SUCCESS, JobOutcome.FAILED):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as output_root:
+                diagnostic = "owned group probe failed: fixture detail"
+
+                class UncertainRunner(_ProducingRunner):
+                    def run_job(self, *args, **kwargs):
+                        result = super().run_job(*args, **kwargs)
+                        result.render_cleanup_state = "unknown"
+                        result.outcome = outcome
+                        result.return_code = 0 if outcome == JobOutcome.SUCCESS else -9
+                        result.diagnostic = diagnostic
+                        return result
+
+                output = Path(output_root) / "output.mp4"
+                output.write_bytes(b"previous published video")
+                with (
+                    patch.object(adapter, "verify_storyboard", return_value=[]),
+                    patch.object(adapter, "manim_available", return_value=True),
+                    patch.object(adapter, "RenderRunner", UncertainRunner),
+                    patch.object(adapter.shutil, "copyfile") as publish,
+                    patch("subprocess.Popen", side_effect=AssertionError("no child")),
+                    patch("subprocess.run", side_effect=AssertionError("no command")),
+                    patch("os.kill", side_effect=AssertionError("no signal")),
+                    patch("os.killpg", side_effect=AssertionError("no signal"), create=True),
+                ):
+                    with self.assertRaises(RenderError) as caught:
+                        render_storyboard(EXAMPLE, str(output), on_log=self.logs.append)
+                error = caught.exception
+                self.addCleanup(shutil.rmtree, error.workdir, True)
+                self.assertEqual(error.render_cleanup_state, "unknown")
+                self.assertTrue(Path(error.workdir).is_dir())
+                self.assertTrue(list(Path(error.workdir).rglob("ExplainerVideo.mp4")))
+                publish.assert_not_called()
+                self.assertEqual(output.read_bytes(), b"previous published video")
+                directory = Path(error.diagnostics_dir)
+                self.assertIn(diagnostic, (directory / "render.log").read_text())
+                self.assertIn(diagnostic, self.logs)
+                self.assertFalse((directory / "result.json").exists())
+                events = [
+                    json.loads(line)
+                    for line in (directory / "diagnostics.jsonl").read_text().splitlines()
+                ]
+                result_event = next(e for e in events if e["event"] == "render_result")
+                self.assertEqual(result_event["outcome"], outcome.value)
+                self.assertEqual(result_event["render_cleanup_state"], "unknown")
+                self.assertEqual(
+                    result_event["return_code"], 0 if outcome == JobOutcome.SUCCESS else -9
+                )
+                self.assertNotIn(diagnostic, (directory / "diagnostics.jsonl").read_text())
+                self.assertLess(
+                    events.index(result_event),
+                    next(i for i, e in enumerate(events) if e["event"] == "operation_failed"),
+                )
+
     def diagnostic_directory(self):
         directories = list((self.root / ".explainer-logs").glob("run-*"))
         self.assertEqual(len(directories), 1)

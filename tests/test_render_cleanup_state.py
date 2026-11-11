@@ -316,3 +316,110 @@ class CleanupEvidenceTests(unittest.TestCase):
                     session.reader_start_completed = True
                     session._observe_cleanup(0)
                     self.assertEqual(session.render_cleanup_state, expected)
+
+
+class ForcedCleanupWindowTests(unittest.TestCase):
+    """The leader wait and post-kill observation share one bounded window."""
+
+    def run_case(self, platform, release_at, probe_error=None, reader_alive=False, reap_delay=0.05):
+        import subprocess
+        from app.render import process_session as module
+
+        clock = [0.0]
+        reaped = [False]
+        process = Mock(pid=123, stdout=None)
+        process.poll.side_effect = lambda: -9 if reaped[0] else None
+        reader = Mock()
+        reader.is_alive.return_value = reader_alive
+        session = _ProcessSession(process, 123, None, reader, 0.25, 0.01)
+        job = Mock(assigned=True)
+        if platform == "win32":
+            session.windows_job = job
+
+        def wait(timeout):
+            clock[0] += min(reap_delay, timeout)
+            if reap_delay > timeout:
+                raise subprocess.TimeoutExpired("render", timeout)
+            reaped[0] = True
+            return -9
+
+        process.wait.side_effect = wait
+
+        def active():
+            if clock[0] >= release_at:
+                return False
+            if probe_error is not None and clock[0] > 0:
+                raise probe_error("probe uncertain")
+            return True
+
+        def killpg(_target, _signal):
+            self.assertEqual(_signal, 0, "only a guarded read-only probe is allowed")
+            if not active():
+                raise ProcessLookupError()
+
+        job.active_processes.side_effect = lambda: int(active())
+
+        def advance(duration):
+            clock[0] += duration
+
+        with (
+            patch.object(module.sys, "platform", platform),
+            patch.object(module.time, "monotonic", side_effect=lambda: clock[0]),
+            patch.object(module.time, "sleep", side_effect=advance),
+            patch.object(module, "_signal_group", side_effect=["graceful unavailable", ""]),
+            patch("os.killpg", create=True, side_effect=killpg),
+            patch("subprocess.Popen", side_effect=AssertionError("no process")),
+            patch("subprocess.run", side_effect=AssertionError("no command")),
+            patch("os.kill", side_effect=AssertionError("no signal")),
+        ):
+            diagnostic = session._stop_group()
+            session._observe_cleanup(-9 if reaped[0] else None)
+        self.assertLessEqual(clock[0], 0.25)
+        return session, diagnostic, clock[0]
+
+    def test_post_force_transient_membership_or_permission_releases(self):
+        for platform, error in (("darwin", None), ("darwin", PermissionError), ("win32", None)):
+            with self.subTest(platform=platform, error=error):
+                session, diagnostic, elapsed = self.run_case(
+                    platform, release_at=0.15, probe_error=error
+                )
+                self.assertEqual(session.render_cleanup_state, State.COMPLETE)
+                self.assertGreaterEqual(elapsed, 0.15)
+                self.assertNotIn("remained active", diagnostic)
+                if platform == "win32":
+                    self.assertEqual(diagnostic, "")
+
+    def test_persistent_membership_permission_and_probe_error_stay_unknown(self):
+        for platform, error in (
+            ("darwin", None),
+            ("darwin", PermissionError),
+            ("darwin", OSError),
+            ("win32", None),
+            ("win32", OSError),
+        ):
+            with self.subTest(platform=platform, error=error):
+                session, diagnostic, elapsed = self.run_case(platform, float("inf"), error)
+                self.assertEqual(session.render_cleanup_state, State.UNKNOWN)
+                self.assertTrue(diagnostic.startswith("process supervision failed:"))
+                if error is not OSError:
+                    self.assertEqual(elapsed, 0.25)
+                else:
+                    self.assertIn("probe uncertain", diagnostic)
+
+    def test_leader_and_reader_evidence_still_required(self):
+        for platform in ("darwin", "win32"):
+            with self.subTest(platform=platform):
+                session, _, _ = self.run_case(platform, 0.15, reader_alive=True)
+                self.assertEqual(session.render_cleanup_state, State.UNKNOWN)
+                session, diagnostic, elapsed = self.run_case(platform, 0.15, reap_delay=1.0)
+                self.assertEqual(session.render_cleanup_state, State.UNKNOWN)
+                self.assertIn("process did not stop", diagnostic)
+                self.assertEqual(elapsed, 0.25)
+
+    def test_slow_reap_does_not_restart_post_force_window(self):
+        for platform in ("darwin", "win32"):
+            with self.subTest(platform=platform):
+                session, diagnostic, elapsed = self.run_case(platform, 0.3, reap_delay=0.2)
+                self.assertEqual(session.render_cleanup_state, State.UNKNOWN)
+                self.assertIn("remained active", diagnostic)
+                self.assertEqual(elapsed, 0.25)

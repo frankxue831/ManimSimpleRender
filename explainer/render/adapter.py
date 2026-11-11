@@ -315,10 +315,6 @@ def render_storyboard(storyboard_path, out_path, quality=None, lang="en", on_log
                 render_state = cleanup_state(getattr(runner_error, "render_cleanup_state", None))
                 raise
             render_state = result_cleanup_state(result)
-            if render_state == RenderCleanupState.UNKNOWN or (
-                result.outcome == JobOutcome.SUCCESS and render_state != RenderCleanupState.COMPLETE
-            ):
-                raise RenderError("render_cleanup_unverified", workdir)
             if getattr(result, "diagnostic", ""):
                 log.write(result.diagnostic)
             if timeline is not None:
@@ -328,6 +324,10 @@ def render_storyboard(storyboard_path, out_path, quality=None, lang="en", on_log
                     render_cleanup_state=render_state.value,
                     return_code=getattr(result, "return_code", None),
                 )
+            if render_state == RenderCleanupState.UNKNOWN or (
+                result.outcome == JobOutcome.SUCCESS and render_state != RenderCleanupState.COMPLETE
+            ):
+                raise RenderError("render_cleanup_unverified", workdir)
             if result.outcome != JobOutcome.SUCCESS:
                 raise RenderError(result.outcome, workdir)
 

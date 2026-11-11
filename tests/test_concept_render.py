@@ -196,6 +196,44 @@ class RenderContract(unittest.TestCase):
             if not isinstance(error, Exception):
                 self.assertIs(caught.exception, error)
 
+    def test_unknown_cleanup_diagnostic_survives_without_success_receipt(self):
+        from concept_render import render_adapter as adapter
+
+        for outcome in (JobOutcome.SUCCESS, JobOutcome.FAILED):
+            with self.subTest(outcome=outcome):
+                diagnostic = "owned group probe failed: fixture detail"
+
+                class UncertainRunner(FakeRunner):
+                    def run_job(self, *args, **kwargs):
+                        result = super().run_job(*args, **kwargs)
+                        result.render_cleanup_state = "unknown"
+                        result.outcome = outcome
+                        result.diagnostic = diagnostic
+                        return result
+
+                with (
+                    mock.patch.object(adapter.threading, "Timer", return_value=mock.Mock()),
+                    mock.patch("subprocess.Popen", side_effect=AssertionError("no child")),
+                    mock.patch("subprocess.run", side_effect=AssertionError("no command")),
+                    mock.patch("os.kill", side_effect=AssertionError("no signal")),
+                    mock.patch("os.killpg", side_effect=AssertionError("no signal"), create=True),
+                ):
+                    with self.assertRaisesRegex(
+                        RuntimeError, "render cleanup is unverified"
+                    ) as caught:
+                        self.render(UncertainRunner())
+                self.assertEqual(caught.exception.render_cleanup_state, "unknown")
+        receipts = list((self.root / "out").rglob("result.json"))
+        self.assertEqual(len(receipts), 2)
+        for path in receipts:
+            result = json.loads(path.read_text())
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["stage"], "render")
+            self.assertEqual(result["render_cleanup_state"], "unknown")
+            self.assertNotIn("video", result)
+            self.assertIn(diagnostic, Path(result["log"]).read_text())
+            self.assertTrue(list(path.parent.rglob("ConceptScene.mp4")))
+
     def test_success_receipt_and_times(self):
         result = self.render(FakeRunner())
         self.assertEqual(result["status"], "success")

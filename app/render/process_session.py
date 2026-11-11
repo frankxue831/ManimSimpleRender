@@ -572,6 +572,11 @@ class _ProcessSession:
                     self.windows_job.terminate()
                 except Exception as exc:
                     diagnostics.append(f"could not terminate Windows Job Object: {exc}")
+            # Reaping the leader can finish before its descendants disappear.
+            # Share this existing forced-cleanup window between leader wait and
+            # group observation; do not add another terminate_timeout to the
+            # exported total supervision budget.
+            forced_deadline = time.monotonic() + self.terminate_timeout
             try:
                 self.process.wait(timeout=self.terminate_timeout)
             except subprocess.TimeoutExpired:
@@ -580,15 +585,15 @@ class _ProcessSession:
             diagnostics.append(f"could not stop process group: {exc}")
         else:
             try:
-                if self._windows_job_owns_tree():
-                    if self._group_is_active():
-                        diagnostics.append(
-                            "Windows Job Object remained active after forced termination"
-                        )
+                owned_job = self._windows_job_owns_tree()
+                if owned_job or sys.platform != "win32":
+                    if self._wait_for_group_release(forced_deadline):
+                        owned_job_released = owned_job
                     else:
-                        owned_job_released = True
+                        target = "Windows Job Object" if owned_job else "process group"
+                        diagnostics.append(f"{target} remained active after forced termination")
             except Exception as exc:
-                diagnostics.append(f"could not verify Windows Job Object state: {exc}")
+                diagnostics.append(f"could not verify process group state: {exc}")
         if not owned_job_released:
             diagnostics.extend(taskkill_diagnostics)
         if diagnostics:
