@@ -39,6 +39,7 @@ facts and audio separately before claiming that an explanation is ready.
 - [Generated diagram motion](diagram-motion.md): supported path and identity rules.
 - [Executable revision example](scene-revision.md#executable-revision-example).
 - [Silent review workflow example](silent-review-example.md): render, revise and retain a candidate for review.
+- [Real-Manim handoff regression](agent-handoff.md#reproducible-real-manim-handoff-regression): concurrent local claims, durable discovery and a pending review.
 - [Contributor guide](../AGENTS.md) and [development checks](../README.md#development).
 - [Shared render-core decision](adr/0001-render-core-boundary.md), with subsequent implementation status.
 - [Changelog](../CHANGELOG.md) for released and unreleased capabilities.
