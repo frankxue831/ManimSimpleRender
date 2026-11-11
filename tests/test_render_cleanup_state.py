@@ -289,14 +289,30 @@ class CleanupEvidenceTests(unittest.TestCase):
         self.assertFalse(original_alive())
 
     def test_incomplete_start_stays_unknown_even_with_finished_identity(self):
-        session = self.session()
-        session.reader.ident = 777
-        session.reader_start_attempted = True
-        session.reader_start_completed = False
-        with patch.object(session, "_group_is_active", return_value=False):
-            session._observe_cleanup(0)
-        self.assertEqual(session.render_cleanup_state, State.UNKNOWN)
-        session.reader_start_completed = True
-        with patch.object(session, "_group_is_active", return_value=False):
-            session._observe_cleanup(0)
-        self.assertEqual(session.render_cleanup_state, State.COMPLETE)
+        # Backend and ownership evidence must be explicit: an unowned Windows
+        # tree cannot become complete merely because its reader has stopped.
+        for platform, owned, expected in (
+            ("darwin", False, State.COMPLETE),
+            ("win32", True, State.COMPLETE),
+            ("win32", False, State.UNKNOWN),
+        ):
+            with self.subTest(platform=platform, owned=owned):
+                session = self.session()
+                session.reader.ident = 777
+                session.reader_start_attempted = True
+                session.reader_start_completed = False
+                if owned:
+                    session.windows_job = Mock(assigned=True)
+                    session.windows_job.active_processes.return_value = 0
+                with (
+                    patch("app.render.process_session.sys.platform", platform),
+                    patch("subprocess.Popen", side_effect=AssertionError("no real process")),
+                    patch("subprocess.run", side_effect=AssertionError("no real command")),
+                    patch("os.kill", side_effect=AssertionError("no real signal")),
+                    patch("os.killpg", create=True, side_effect=ProcessLookupError),
+                ):
+                    session._observe_cleanup(0)
+                    self.assertEqual(session.render_cleanup_state, State.UNKNOWN)
+                    session.reader_start_completed = True
+                    session._observe_cleanup(0)
+                    self.assertEqual(session.render_cleanup_state, expected)
