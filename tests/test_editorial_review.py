@@ -1,8 +1,10 @@
+import contextlib
+import io
 import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import mock_open, patch
 
 from scene_production import editorial
 
@@ -164,6 +166,91 @@ class EditorialReviewTests(unittest.TestCase):
                 self.assertEqual(result["previous"]["addressed_findings"], [])
                 self.assertEqual(result["previous"]["review"]["sha256"], editorial.digest(prior))
                 self.assertTrue(result["previous_review_unchanged"])
+
+    def test_symlink_loop_is_reported_as_changed(self):
+        review = self.root / "review.json"
+        editorial.record_review(self.video, self.assessment, review)
+        self.frame.unlink()
+        try:
+            self.frame.symlink_to(self.frame)
+        except OSError as exc:
+            self.skipTest(f"symlinks unavailable: {exc}")
+        self.assertFalse(editorial.compare(review, self.video)["evidence"][0]["unchanged"])
+
+    def test_record_and_cli_handle_unresolvable_artifact(self):
+        review = self.root / "review.json"
+        editorial.record_review(self.video, self.assessment, review)
+        candidate = self.root / "loop.mp4"
+        try:
+            candidate.symlink_to(candidate)
+        except OSError as exc:
+            self.skipTest(f"symlinks unavailable: {exc}")
+        with self.assertRaises((OSError, ValueError)):
+            editorial.record_review(candidate, self.assessment, self.root / "bad.json")
+        with patch.object(Path, "resolve", side_effect=RuntimeError("symlink loop")):
+            with self.assertRaisesRegex(ValueError, "symlink loop"):
+                editorial.record_review(self.video, self.assessment, self.root / "bad.json")
+        with contextlib.redirect_stderr(io.StringIO()) as stderr:
+            with self.assertRaises(SystemExit) as exit_code:
+                editorial.main(["compare", "--review", str(review), "--candidate", str(candidate)])
+        self.assertEqual(exit_code.exception.code, 2)
+        self.assertIn("editorial review failed:", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_symlink_loops_mark_reviewed_video_and_previous_as_changed(self):
+        first, second = self.root / "first.json", self.root / "second.json"
+        editorial.record_review(self.video, self.assessment, first)
+        editorial.record_review(self.video, self.assessment, second, previous=first)
+        candidate = self.root / "candidate.mp4"
+        candidate.write_bytes(self.video.read_bytes())
+        for path in (self.video, first):
+            path.unlink()
+            try:
+                path.symlink_to(path)
+            except OSError as exc:
+                self.skipTest(f"symlinks unavailable: {exc}")
+        result = editorial.compare(second, candidate)
+        self.assertFalse(result["reviewed_video_available_and_unchanged"])
+        self.assertFalse(result["previous_review_unchanged"])
+
+    def test_load_rejects_noncanonical_assessment_and_excess_evidence(self):
+        review = self.root / "review.json"
+        editorial.record_review(self.video, self.assessment, review)
+        valid = json.loads(review.read_text())
+        cases = (
+            ("array of pairs", list(valid["assessment"].items())),
+            ("null", None),
+            ("scalar", 42),
+            ("nested evidence", dict(valid["assessment"], evidence=[])),
+        )
+        for label, assessment in cases:
+            with self.subTest(case=label):
+                malformed = dict(valid, assessment=assessment)
+                review.write_text(json.dumps(malformed))
+                with self.assertRaises(ValueError):
+                    editorial.compare(review, self.video)
+        malformed = dict(valid, evidence=valid["evidence"] * 101)
+        review.write_text(json.dumps(malformed))
+        with self.assertRaises(ValueError):
+            editorial.compare(review, self.video)
+        review.write_text(json.dumps(dict(valid, evidence=valid["evidence"] * 100)))
+        self.assertEqual(len(editorial.compare(review, self.video)["evidence"]), 100)
+
+    def test_load_caps_read_and_accepts_exact_limit(self):
+        review = self.root / "review.json"
+        editorial.record_review(self.video, self.assessment, review)
+        raw = review.read_bytes()
+        limit = 4 * 1024 * 1024
+        review.write_bytes(raw + b" " * (limit - len(raw)))
+        self.assertTrue(editorial.compare(review, self.video)["assessment_current"])
+        review.write_bytes(raw + b" " * (limit + 1 - len(raw)))
+        with self.assertRaisesRegex(ValueError, "exceeds 4 MiB"):
+            editorial.compare(review, self.video)
+        opener = mock_open(read_data=b"x" * (limit + 1))
+        with patch.object(Path, "open", opener):
+            with self.assertRaisesRegex(ValueError, "exceeds 4 MiB"):
+                editorial._load(review)
+        opener().read.assert_called_once_with(limit + 1)
 
     def test_changed_prior_review_is_detected(self):
         first, second = self.root / "first.json", self.root / "second.json"

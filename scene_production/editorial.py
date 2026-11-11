@@ -16,6 +16,7 @@ from . import digest, pairs
 
 ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 SHA = re.compile(r"[0-9a-f]{64}\Z")
+MAX_REVIEW_BYTES = 4 * 1024 * 1024
 
 
 def _text(value):
@@ -23,7 +24,10 @@ def _text(value):
 
 
 def _entry(path):
-    path = Path(path).expanduser().resolve(strict=True)
+    try:
+        path = Path(path).expanduser().resolve(strict=True)
+    except RuntimeError as exc:
+        raise ValueError(str(exc)) from exc
     if not path.is_file():
         raise ValueError("artifact must be a file")
     return {"path": str(path), "sha256": digest(path)}
@@ -105,8 +109,9 @@ def _assessment(data):
 
 
 def _load(path):
-    raw = Path(path).read_bytes()
-    if len(raw) > 4 * 1024 * 1024:
+    with Path(path).open("rb") as handle:
+        raw = handle.read(MAX_REVIEW_BYTES + 1)
+    if len(raw) > MAX_REVIEW_BYTES:
         raise ValueError("review exceeds 4 MiB")
     data = json.loads(raw, object_pairs_hook=pairs)
     if not isinstance(data, dict) or set(data) != {
@@ -123,10 +128,21 @@ def _load(path):
         or not _valid_entry(data["video"])
     ):
         raise ValueError("invalid review version or video")
+    if not isinstance(data["assessment"], dict) or set(data["assessment"]) != {
+        "reviewer",
+        "scope",
+        "decision",
+        "findings",
+    }:
+        raise ValueError("invalid persisted assessment")
     assessment = dict(data["assessment"])
     assessment["evidence"] = []
     _assessment(assessment)
-    if not isinstance(data["evidence"], list) or not all(_valid_entry(x) for x in data["evidence"]):
+    if (
+        not isinstance(data["evidence"], list)
+        or len(data["evidence"]) > 100
+        or not all(_valid_entry(x) for x in data["evidence"])
+    ):
         raise ValueError("invalid evidence references")
     previous = data["previous"]
     if previous is not None and (
@@ -173,7 +189,7 @@ def record_review(video, assessment, output, previous=None, addresses=()):
     payload = (json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode(
         "utf-8"
     )
-    if len(payload) > 4 * 1024 * 1024:
+    if len(payload) > MAX_REVIEW_BYTES:
         raise ValueError("review exceeds 4 MiB")
     target = Path(output)
     descriptor, temporary = tempfile.mkstemp(prefix=".editorial-", dir=target.parent)
