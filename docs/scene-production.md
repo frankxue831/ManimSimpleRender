@@ -146,6 +146,9 @@ code may override it. Verify actual probe and trace evidence for your needs. It
 promises neither constant frame rate, exact duration nor delivery acceptance and
 does not repair timing failures. Existing downstream limits remain independent:
 the legacy visual-frame helper accepts only 15/30fps and at most 120 seconds.
+The [caption-free evidence exporter](scene-frame-samples.md#supported-local-inputs-and-limits)
+accepts observed nominal rates up to 60fps, so a valid 1..240fps render request
+does not guarantee export eligibility.
 
 Opted-in receipts include `requested_fps` and the prepared command, even if a later
 render step fails. Command preparation does not prove that a process started;

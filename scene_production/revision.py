@@ -137,12 +137,10 @@ def manifest(path):
     if ids != [s["label"] for s in timeline["segments"]]:
         raise ValueError("manifest IDs must match ordered timeline labels")
     for s in segs:
-        if (
-            not s["captions"]
-            or not s["objects"]
-            or any(d not in ids or ids.index(d) >= ids.index(s["id"]) for d in s["depends_on"])
+        if not s["objects"] or any(
+            d not in ids or ids.index(d) >= ids.index(s["id"]) for d in s["depends_on"]
         ):
-            raise ValueError("segment requires captions, objects and valid dependencies")
+            raise ValueError("segment requires objects and valid dependencies")
     return m, path, files, deps, timeline
 
 

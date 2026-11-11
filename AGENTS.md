@@ -52,7 +52,9 @@ Services never import the UI; only the render worker imports Qt.
 `scene_production/captions.py` binds explicit frame events and an external SRT
 to a completed public run. `audio.py` freezes existing PCM WAV inputs and creates
 separate previews; these do not inherit the silent revision contract.
-`visual_frames.py` samples at most 12 decoded frames with cue references.
+`visual_frames.py` preserves at most 12 caption-linked decoded samples and adds
+caption-free bounded native-frame evidence with labelled raster sheets. See
+`docs/scene-frame-samples.md` for the distinct evidence schema and export-only claims.
 `agent.py` wraps the existing render/reinspect APIs with persisted attempt state
 and JSONL. A legacy receipt's `status=failed` can be intermediate; agent terminal
 events require API completion, never a receipt poll. None of these modules is a
