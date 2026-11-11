@@ -123,3 +123,23 @@ revision-audit protocol:
 The helper does not map review decisions to pass/fail exit codes. For the
 command-specific render and revision rules, see the
 [agent quick start](agent-quickstart.md#interpret-each-commands-result).
+
+## Record preparation timestamp
+
+New records use schema version 2 with a required `record_prepared_at` in canonical
+UTC `YYYY-MM-DDTHH:MM:SS.sssZ`. The writer observes its local wall clock once,
+after validation and hash checks, before serialization and exclusive publication.
+Callers cannot supply or backdate it. Clock failure or an invalid value fails
+before temporary output is created.
+
+Strict version 1 records remain readable without migration or timestamp backfill.
+Older version 1-only tools reject version 2 records: upgrade readers before
+producing version 2 records. Compare reports their timestamp as null; version 2 reports the saved value.
+Previous links may reference either version and continue hashing the exact bytes.
+Equal or backwards clocks do not invalidate links. No durations or chronological
+conclusions are computed, and readiness remains `not_determined`.
+
+This is writer-preparation time, not actual reviewing, viewing, successful
+publication, approval, effort, authentication, or a complete time-to-correct
+metric. Local clocks may be wrong. Records remain unsigned and user-editable.
+Finding categories are deferred; the finding whitelist is unchanged.

@@ -5,6 +5,7 @@ comprehension, or render completion. Trusted local files; no concurrent writers.
 """
 
 import argparse
+from datetime import datetime, timezone
 import json
 import math
 import os
@@ -17,6 +18,27 @@ from . import digest, pairs
 ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 SHA = re.compile(r"[0-9a-f]{64}\Z")
 MAX_REVIEW_BYTES = 4 * 1024 * 1024
+
+
+def _prepared_at():
+    """Observe the local UTC wall clock once, without claiming publication time."""
+    try:
+        return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    except (OSError, OverflowError, RuntimeError) as exc:
+        raise ValueError("cannot observe record preparation time") from exc
+
+
+def _validate_prepared_at(value):
+    if (
+        not isinstance(value, str)
+        or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z", value)
+        is None
+    ):
+        raise ValueError("invalid record_prepared_at")
+    try:
+        datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ")
+    except ValueError as exc:
+        raise ValueError("invalid record_prepared_at") from exc
 
 
 def _text(value):
@@ -114,17 +136,27 @@ def _load(path):
     if len(raw) > MAX_REVIEW_BYTES:
         raise ValueError("review exceeds 4 MiB")
     data = json.loads(raw, object_pairs_hook=pairs)
-    if not isinstance(data, dict) or set(data) != {
+    if not isinstance(data, dict):
+        raise ValueError("invalid review record")
+    version = data.get("schema_version")
+    if type(version) is not int or version not in (1, 2):
+        raise ValueError("invalid review version")
+    expected = {
         "schema_version",
         "video",
         "assessment",
         "evidence",
         "previous",
-    }:
+    }
+    if version == 2:
+        expected.add("record_prepared_at")
+    if set(data) != expected:
         raise ValueError("invalid review record")
+    if version == 2:
+        _validate_prepared_at(data["record_prepared_at"])
     if (
         type(data["schema_version"]) is not int
-        or data["schema_version"] != 1
+        or data["schema_version"] not in (1, 2)
         or not _valid_entry(data["video"])
     ):
         raise ValueError("invalid review version or video")
@@ -178,7 +210,7 @@ def record_review(video, assessment, output, previous=None, addresses=()):
     elif addresses:
         raise ValueError("addresses requires a previous review")
     result = {
-        "schema_version": 1,
+        "schema_version": 2,
         "video": video_entry,
         "assessment": {k: assessment[k] for k in ("reviewer", "scope", "decision", "findings")},
         "evidence": evidence,
@@ -186,6 +218,9 @@ def record_review(video, assessment, output, previous=None, addresses=()):
     }
     if not all(_unchanged(entry) for entry in [video_entry, *evidence]):
         raise ValueError("artifact changed during recording")
+    prepared_at = _prepared_at()
+    _validate_prepared_at(prepared_at)
+    result["record_prepared_at"] = prepared_at
     payload = (json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode(
         "utf-8"
     )
@@ -225,6 +260,11 @@ def compare(review, candidate):
         "assessment_current": current,
         "candidate_requires_fresh_assessment": not current,
         "readiness": "not_determined",
+        "record_prepared_at": data.get("record_prepared_at"),
+        "timestamp_notice": (
+            "Local writer preparation time only; not review, viewing, publication, "
+            "approval, effort, authentication, chronology, or time to correct."
+        ),
         "reviewed_video_available_and_unchanged": _unchanged(data["video"]),
         "reviewer": data["assessment"]["reviewer"],
         "scope": data["assessment"]["scope"],
