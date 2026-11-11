@@ -106,6 +106,22 @@ jobs:
           source .venv/bin/activate
           python -m unittest tests.explainer_tests.test_code_compat tests.e2e.test_real_render_smoke tests.test_frame_capture_process
 
+      - name: Public explicit FPS fixture (API and agent, native trace and audit)
+        env:
+          MSR_FPS_EVIDENCE_DIR: ${{ runner.temp }}/explicit-fps-evidence
+        run: |
+          source .venv/bin/activate
+          python -m unittest tests.test_explicit_fps_process
+
+      - name: Retain public explicit FPS fixture evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: explicit-fps-evidence-${{ matrix.python-version }}
+          path: ${{ runner.temp }}/explicit-fps-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Traced silent revision and review example
         run: |
           source .venv/bin/activate

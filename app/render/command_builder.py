@@ -20,6 +20,8 @@ import shutil
 import subprocess
 import sys
 
+from .frame_rate import validate_fps
+
 
 def display_command(argv):
     """Render an argv list as a copy/paste-safe shell command string (BL-01).
@@ -76,14 +78,20 @@ def manim_available(find_spec=importlib.util.find_spec, frozen=None, which=shuti
         return False
 
 
-def build_command(job, resolution_flag, output_dir, engine_renderer_flag="", base_command=None):
+def build_command(
+    job, resolution_flag, output_dir, engine_renderer_flag="", base_command=None, *, fps=None
+):
     """Return the manim argv list for ``job`` at the given resolution/engine.
 
     ``base_command`` overrides the resolved manim prefix (defaults to
     :func:`manim_base_command`), so callers/tests can pin the invocation.
+    ``fps=None`` leaves presets unchanged; an integer requests an independent rate.
     """
+    validate_fps(fps)
     command = list(base_command if base_command is not None else manim_base_command())
     command += [job.file_path, job.scene_class, resolution_flag, "--media_dir", output_dir]
     if engine_renderer_flag:
         command.append(engine_renderer_flag)
+    if fps is not None:
+        command.extend(["--fps", str(fps)])
     return command

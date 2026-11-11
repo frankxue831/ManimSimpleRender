@@ -21,6 +21,7 @@ import traceback
 
 from app.render.cleanup import RenderCleanupState, cleanup_state
 from app.render.diagnostics import DiagnosticTimeline, utc_timestamp
+from app.render.frame_rate import parse_fps
 
 from . import _ProductionInterrupted, _font_failure_hint, digest, pairs
 
@@ -68,6 +69,7 @@ def _parser():
         command.add_argument("--tool-timeout", type=float, default=30)
         if operation == "render":
             command.add_argument("--quality", default="qm", choices=["ql", "qm", "qh", "qp", "qk"])
+            command.add_argument("--fps", type=parse_fps, default=None)
             command.add_argument("--timeout", type=float, default=120)
             command.add_argument("--record-scene-frames", action="store_true")
     return parser
@@ -117,6 +119,7 @@ def describe_protocol():
             "timeout": 120,
             "tool_timeout": 30,
             "record_scene_frames": False,
+            "fps": {"default": None, "type": "integer", "minimum": 1, "maximum": 240},
         },
         "inspect_options": {"tool_timeout": 30},
         "output_policy": "New exclusive directory; parent must exist. Never reuse an attempt.",
@@ -356,6 +359,7 @@ def main(argv=None):
     stream, attempt, operation, events = sys.stdout, None, None, []
     code, status, phase, payload = 1, "failed", "arguments", {}
     render_state = RenderCleanupState.NOT_STARTED
+    intent = {}
 
     def cleanup_fields():
         if operation != "render":
@@ -375,6 +379,7 @@ def main(argv=None):
             timestamp=utc_timestamp(),
             elapsed_seconds=round(max(0, time.monotonic() - began), 6),
             phase=phase,
+            **intent,
             **fields,
         )
 
@@ -392,6 +397,8 @@ def main(argv=None):
     try:
         args = _parser().parse_args(argv)
         operation = args.operation
+        if operation == "render" and args.fps is not None:
+            intent["requested_fps"] = args.fps
         if operation == "describe":
             payload = {"description": describe_protocol()}
         else:

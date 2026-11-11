@@ -253,3 +253,19 @@ for protocol compatibility. It does not grant permission to reuse a render slot.
 It rejects contradictory safe outcomes with unknown cleanup or a false cleanup
 verification flag. Inspect/describe do not inherit a source render's state.
 A production receipt, including one with this field, is never a liveness signal.
+
+## Optional requested frame rate
+
+A 1080p30 render request appends `--quality qh --fps 30` to the agent's `render`
+command. `describe` advertises optional `fps` with the integer range 1–240.
+`inspect` has no FPS option. Invalid integer/range tokens are rejected with the
+existing argument-error JSONL and exit 2 before creating an attempt or emitting
+`started`. Decimal, exponent, nonfinite and boolean spellings are invalid.
+
+Omitting FPS preserves the preset and existing records. An explicit valid rate
+adds `requested_fps` to started/terminal events and their persisted attempt/journal
+records. The production receipt records requested intent and the prepared command;
+a prepared command is not evidence that spawn occurred. Tokens, completion,
+cleanup and recovery rules are unchanged. Source/config overrides can produce a
+different observed rate: inspect probe/trace evidence. This is not a CFR,
+exact-duration or delivery guarantee, and downstream helper limits are unchanged.

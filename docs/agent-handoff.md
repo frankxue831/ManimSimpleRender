@@ -370,3 +370,25 @@ unverified. Read-only reconciliation preserves unknown. The render slot remains
 held, and dependents remain blocked. Existing fenced finish/eligibility rules,
 launch gates and audited abandonment proofs are unchanged; wrapper exit, missing
 PIDs, operator assertions and same-boot scans are not new release proofs.
+
+## Optional FPS in render payloads
+
+A render payload can request 1080p30 with `"quality": "qh", "fps": 30` alongside
+its existing scene and timeline fields. FPS is optional and must be a JSON integer
+from 1 to 240; booleans, floats and strings are rejected. Missing `fps` and
+`"fps": null` both leave the existing preset/argv unchanged. The ledger retains
+the original payload, including the distinction between missing and null, through
+claim and recovery. Tasks requesting 30 and 60 retain their distinct intent.
+No historical record migration or request-identity change is introduced.
+
+The runner validates FPS before acquiring a claim, changing a fence, creating an
+attempt or launching the fixed agent command. Generic ledger storage is not a
+render validator: an invalid stored render payload cannot launch. No arbitrary
+extra argv is allowed. Authorization, execution identity and unknown-cleanup
+blocking rules are unchanged.
+
+An explicit valid FPS becomes `--fps INTEGER` and conditional `requested_fps`
+evidence in agent records and the production receipt. This is requested intent,
+not a CFR, exact-duration or delivery guarantee. Source/config overrides may
+change the observed rate; probe and trace evidence remain authoritative. Existing
+downstream helper limits are independent and unchanged.

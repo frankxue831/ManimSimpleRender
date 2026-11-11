@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sys
 from . import render
+from app.render.frame_rate import parse_fps
 
 
 def _error(exc):
@@ -42,6 +43,7 @@ def main():
     for name in ("scene-file", "scene", "timeline", "output-dir"):
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--quality", default="qm")
+    parser.add_argument("--fps", type=parse_fps, default=None)
     parser.add_argument(
         "--record-scene-frames",
         action="store_true",
