@@ -207,3 +207,10 @@ tokens in the same range. Invalid FPS is rejected before the attempt is created.
 it; verify observed probe/trace data. The option does not guarantee CFR, exact
 duration, semantic acceptance or delivery, and does not expand downstream helper
 limits. Reinspection does not render or accept a new FPS option.
+
+### Videos assembled after rendering
+
+If your final video contains footage added after Manim rendering, its raw-scene
+review does not cover the final composite. See the [synthetic composition
+example](composed-review-example.md) for separate identities, assembly provenance,
+protected moving-footage comparisons, and final-video review records.
