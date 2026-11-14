@@ -50,3 +50,5 @@ facts and audio separately before claiming that an explanation is ready.
 The [archive](archive/README.md) preserves designs, plans, migrations, experiments and
 reviews. Their results apply to the recorded revisions and environments; use the
 guides above for current operation.
+
+Agent runtime diagnostics: `python -m app.environment --json`; see the [agent quickstart](agent-quickstart.md#agent-runtime-preflight).
