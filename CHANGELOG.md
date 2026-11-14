@@ -155,3 +155,6 @@ First tagged release (`6973ba4`).
 [Unreleased]: https://github.com/frankxue831/ManimSimpleRender/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/frankxue831/ManimSimpleRender/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/frankxue831/ManimSimpleRender/releases/tag/v0.1.0
+
+### Agent runtime preflight
+- Add a Qt-free JSON environment command reusing the GUI doctor, with interpreter-specific recovery, required ffprobe, optional default Tex requirements, and advisory build metadata checks. No render smoke test is implied.
