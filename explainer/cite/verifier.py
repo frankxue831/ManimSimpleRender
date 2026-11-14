@@ -18,6 +18,7 @@ character), or a shift that moves a line holding some token onto an edge.
 """
 
 import os
+import ntpath
 import re
 import subprocess
 from bisect import bisect_left
@@ -124,7 +125,19 @@ def _dirty_lines(status_stdout, repo_root, ignore_paths=()):
 
 def _read_cited(repo_root, cite):
     path, start, end = parse_cite(cite)
-    with open(os.path.join(repo_root, path), encoding="utf-8") as handle:
+    # Citations identify files within this source root, never arbitrary files
+    # on the verifier's machine. Resolve symlinks before enforcing containment.
+    if not path or os.path.isabs(path) or ntpath.isabs(path) or ntpath.splitdrive(path)[0]:
+        raise ValueError("citation path must be repository-relative")
+    real_root = os.path.realpath(repo_root)
+    real_path = os.path.realpath(os.path.join(real_root, path))
+    try:
+        contained = os.path.commonpath([real_root, real_path]) == real_root
+    except ValueError:
+        contained = False
+    if not contained:
+        raise ValueError("citation path resolves outside repository root")
+    with open(real_path, encoding="utf-8") as handle:
         lines = handle.read().splitlines()
     if start < 1 or end > len(lines) or start > end:
         raise IndexError(f"cite range {start}-{end} out of bounds (file has {len(lines)} lines)")

@@ -20,6 +20,7 @@ import sys
 import tempfile
 import unicodedata
 import zipfile
+import zlib
 
 from . import pairs
 
@@ -325,6 +326,48 @@ def _archive_budget(path):
         raise ValueError("first referenced local header must start at zero; prefixes are refused")
 
 
+def _entry_bytes(archive, name, limit):
+    """Decode supported ZIP entries with an output cap, not a trusted size claim.
+
+    ZipExtFile can truncate output to a spoofed file_size, and some of its
+    decompressors allocate unbounded intermediate output. Validate the local
+    header with ZipFile, then decode only STORE/DEFLATE ourselves with a cap.
+    """
+    info = archive.getinfo(name)
+    if info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+        raise ValueError("project archives support only stored or DEFLATE entries")
+    cap = min(limit, info.file_size)
+    with archive.open(info):
+        pass  # Validate local name, flags and overlapping entry bounds, without reading.
+    source = archive.fp
+    source.seek(info.header_offset)
+    header = source.read(30)
+    if len(header) != 30 or header[:4] != b"PK\x03\x04":
+        raise ValueError("invalid local archive header")
+    name_len, extra_len = struct.unpack_from("<HH", header, 26)
+    source.seek(name_len + extra_len, 1)
+    decoder = zlib.decompressobj(-zlib.MAX_WBITS) if info.compress_type else None
+    remaining = info.compress_size
+    raw = bytearray()
+    while remaining:
+        chunk = source.read(min(65536, remaining))
+        if not chunk:
+            raise ValueError("truncated archive entry")
+        remaining -= len(chunk)
+        if decoder is not None:
+            chunk = decoder.decompress(chunk, cap + 1 - len(raw))
+        raw.extend(chunk)
+        if len(raw) > cap:
+            raise ValueError("archive entry exceeds declared size or output budget")
+        if decoder is not None and (decoder.unused_data or decoder.unconsumed_tail):
+            raise ValueError("archive entry contains excess compressed data")
+    if decoder is not None and not decoder.eof:
+        raise ValueError("incomplete DEFLATE stream")
+    if len(raw) != info.file_size or zlib.crc32(raw) != info.CRC:
+        raise ValueError("archive entry size/CRC mismatch")
+    return bytes(raw)
+
+
 def _archive(path):
     _archive_budget(path)
     try:
@@ -343,14 +386,20 @@ def _archive(path):
                     or kind not in (0, stat.S_IFREG)
                     or i.flag_bits & 1
                     or i.file_size > MAX_FILE_BYTES
+                    or i.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
                 ):
-                    raise ValueError("encrypted, linked, special or oversized archive entry")
+                    raise ValueError(
+                        "encrypted, linked, special, oversized "
+                        "or unsupported-compression archive entry"
+                    )
             if "handoff.json" not in archive.namelist() or "project.json" not in archive.namelist():
                 raise ValueError("missing handoff/project inventory")
             if any(archive.getinfo(n).file_size > 2 * 1024 * 1024 for n in RESERVED):
                 raise ValueError("handoff/project JSON exceeds 2 MiB")
-            handoff = _json(archive.read("handoff.json"))
-            spec = _json(archive.read("project.json"))
+            handoff_raw = _entry_bytes(archive, "handoff.json", 2 * 1024 * 1024)
+            project_raw = _entry_bytes(archive, "project.json", 2 * 1024 * 1024)
+            handoff = _json(handoff_raw)
+            spec = _json(project_raw)
             _project(spec)
             if (
                 not isinstance(handoff, dict)
@@ -372,7 +421,7 @@ def _archive(path):
             for selected, f in zip(spec["files"], handoff["files"]):
                 if not isinstance(f, dict) or {k: f.get(k) for k in selected} != selected:
                     raise ValueError("inventory role/path/permission mismatch")
-                raw = archive.read(selected["path"])
+                raw = _entry_bytes(archive, selected["path"], MAX_FILE_BYTES)
                 _content(raw)
                 if (
                     type(f.get("bytes")) is not int
@@ -382,10 +431,17 @@ def _archive(path):
                     raise ValueError("input size/hash mismatch: " + selected["path"])
                 contents[selected["path"]] = raw
             _closure(spec, contents)
-            contents["project.json"] = archive.read("project.json")
-            contents["handoff.json"] = archive.read("handoff.json")
+            contents["project.json"] = project_raw
+            contents["handoff.json"] = handoff_raw
             return handoff, contents
-    except (zipfile.BadZipFile, KeyError, TypeError, UnicodeError, NotImplementedError) as exc:
+    except (
+        zipfile.BadZipFile,
+        KeyError,
+        TypeError,
+        UnicodeError,
+        NotImplementedError,
+        zlib.error,
+    ) as exc:
         raise ValueError("invalid project archive: " + str(exc)) from exc
 
 

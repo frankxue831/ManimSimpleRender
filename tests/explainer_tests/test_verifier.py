@@ -52,6 +52,52 @@ def _storyboard(callout=None, claims=(), repo_root="/tmp"):
     )
 
 
+class CitationContainmentTests(unittest.TestCase):
+    def test_absolute_traversal_and_escaping_symlinks_fail_gate(self):
+        with tempfile.TemporaryDirectory() as parent:
+            root = os.path.join(parent, "repo")
+            os.mkdir(root)
+            outside = os.path.join(parent, "outside.py")
+            with open(outside, "w", encoding="utf-8") as handle:
+                handle.write("visible_token = 1\n")
+            paths = [outside, "../outside.py", "C:\\outside.py", "C:outside.py"]
+            try:
+                os.symlink(outside, os.path.join(root, "escape.py"))
+            except (OSError, NotImplementedError):
+                pass
+            else:
+                paths.append("escape.py")
+            for path in paths:
+                with self.subTest(path=path):
+                    sb = _storyboard(
+                        claims=(Claim(cite=path + ":1", evidence=("visible_token",)),),
+                        repo_root=root,
+                    )
+                    failures = verify_storyboard(sb)
+                    self.assertEqual(len(failures), 1)
+                    self.assertEqual(failures[0].reason, "ValueError")
+
+    def test_nested_file_and_internal_symlink_remain_valid(self):
+        with tempfile.TemporaryDirectory() as root:
+            os.mkdir(os.path.join(root, "nested"))
+            source = os.path.join(root, "nested", "inside.py")
+            with open(source, "w", encoding="utf-8") as handle:
+                handle.write("visible_token = 1\n")
+            paths = ["nested/inside.py"]
+            try:
+                os.symlink(source, os.path.join(root, "alias.py"))
+            except (OSError, NotImplementedError):
+                pass
+            else:
+                paths.append("alias.py")
+            for path in paths:
+                sb = _storyboard(
+                    claims=(Claim(cite=path + ":1", evidence=("visible_token",)),),
+                    repo_root=root,
+                )
+                self.assertEqual(verify_storyboard(sb), [])
+
+
 class VerifierTests(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()

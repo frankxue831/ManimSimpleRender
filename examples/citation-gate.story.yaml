@@ -56,7 +56,7 @@ beats:
         if _WORD_CHAR.match(token[-1]):
             pattern += r"(?![A-Za-z0-9_])"
       language: python
-      cite: "explainer/cite/verifier.py:83-87"
+      cite: "explainer/cite/verifier.py:84-88"
       evidence:
         - "pattern = re.escape(token)"
         - "if _WORD_CHAR.match(token[0]):"
@@ -66,12 +66,12 @@ beats:
       regions:
         - { lines: [2, 3, 4, 5], emphasis: strong, narration: "A plain token must match whole words, so a two is not found in twenty-four." }
     claims:
-      - cite: "explainer/cite/verifier.py:71"
+      - cite: "explainer/cite/verifier.py:72"
         evidence: ['_WORD_CHAR = re.compile(r"[A-Za-z0-9_]")']
-      - cite: "explainer/cite/verifier.py:216"
+      - cite: "explainer/cite/verifier.py:229"
         evidence: ["pattern = re.compile(_plain_token_pattern(_normalize(token)))"]
-      - cite: "explainer/cite/verifier.py:127"
-        evidence: ['with open(os.path.join(repo_root, path), encoding="utf-8") as handle:']
+      - cite: "explainer/cite/verifier.py:140"
+        evidence: ['with open(real_path, encoding="utf-8") as handle:']
     caption: 'plain tokens match whole words: "2" is not found in "24"'
     narration: >
       The gate reads those lines from disk.
@@ -85,7 +85,7 @@ beats:
             return None
         return CiteFailure(..., "loose_range", ...)
       language: python
-      cite: "explainer/cite/verifier.py:237-248"
+      cite: "explainer/cite/verifier.py:250-261"
       evidence:
         - "first, last = found.span"
         - "if (first, last) == (0, len(lines) - 1): return None"
@@ -95,7 +95,7 @@ beats:
         - { lines: [1, 2, 3], emphasis: normal, narration: "If code moves down a line, the range's first line usually loses its evidence." }
         - { lines: [4], emphasis: strong, narration: "Then the cite fails instead of keeping its badge." }
     claims:
-      - cite: "explainer/cite/verifier.py:373-375"
+      - cite: "explainer/cite/verifier.py:386-388"
         evidence: ["failure = _cite_failure(beat.id, cite, lines, evidence) if failure: failures.append(failure)"]
     caption: "evidence must sit on the first and the last cited line"
     narration: >
@@ -111,7 +111,7 @@ beats:
             if repo_dirty_lines(root):
                 failures.append("dirty_tree")
       language: python
-      cite: "explainer/cite/verifier.py:328-342"
+      cite: "explainer/cite/verifier.py:341-355"
       evidence:
         - "if not actual.lower().startswith(claimed):"
         - 'failures.append( SourceStateFailure( "commit_mismatch",'
@@ -122,9 +122,9 @@ beats:
         - { lines: [1, 2], emphasis: normal, narration: "Then HEAD must match that commit." }
         - { lines: [3, 4, 5], emphasis: normal, narration: "And uncommitted changes fail, unless allowed." }
     claims:
-      - cite: "explainer/cite/verifier.py:301-302"
+      - cite: "explainer/cite/verifier.py:314-315"
         evidence: ["if not source.commit: return []"]
-      - cite: "explainer/cite/verifier.py:361-363"
+      - cite: "explainer/cite/verifier.py:374-376"
         evidence: ["failures = list( verify_source_state(storyboard.source, repo_root=root, ignore_paths=ignore_paths) )"]
       - cite: "explainer/codegen/manim_codegen.py:358"
         evidence: ['badge = f"verified @ {source.commit}" if source.commit else "verified"']

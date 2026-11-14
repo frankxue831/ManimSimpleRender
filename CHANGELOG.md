@@ -6,6 +6,13 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Bound actual portable ZIP inflation and reject unsupported compression methods.
+- Restrict citation reads to the source root, including resolved symlink targets.
+- Preserve existing companion files during planner output-writability probes.
+- Renew valid handoff leases during bounded error cleanup without weakening fencing.
+
 ### Added
 
 - Ordinary Scene production and recorded-video reinspection, with media checks,
