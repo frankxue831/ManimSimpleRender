@@ -78,6 +78,31 @@ def _persist_supervised(path, value, heartbeat, interval):
     heartbeat()
 
 
+def _wait_cleanup(process, timeout, heartbeat, interval):
+    """Wait within one cleanup deadline while retaining a still-valid lease.
+
+    Renewal stays on the SQLite-owning thread. Rejected renewal must not skip
+    process cleanup or restore authority: later evidence/finish operations still
+    enforce the original lease, authorization and fence.
+    """
+    deadline = time.monotonic() + timeout
+    renewal_allowed = True
+    while True:
+        if renewal_allowed:
+            try:
+                heartbeat()
+            except Exception:
+                renewal_allowed = False
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        try:
+            process.wait(timeout=min(interval, remaining))
+            return
+        except subprocess.TimeoutExpired:
+            pass
+
+
 def _events(data):
     if len(data) > LIMIT or not data.endswith(b"\n"):
         raise _EvidenceError("protocol_incomplete")
@@ -438,12 +463,17 @@ def run_task(
                     # The agent's RenderRunner owns a separate render session. Give
                     # its cooperative cleanup the shared core's conservative bound
                     # before killing the wrapper that is supervising that session.
-                    process.wait(timeout=DEFAULT_SUPERVISION_CLEANUP_TIMEOUT)
+                    _wait_cleanup(
+                        process,
+                        DEFAULT_SUPERVISION_CLEANUP_TIMEOUT,
+                        heartbeat,
+                        min(poll_interval, lease_seconds / 6),
+                    )
                 except subprocess.TimeoutExpired:
                     pass
                 try:
                     _signal_group(process.pid, force=True, timeout=2)
-                    process.wait(timeout=2)
+                    _wait_cleanup(process, 2, heartbeat, min(poll_interval, lease_seconds / 6))
                 except (OSError, subprocess.TimeoutExpired):
                     pass
                 result.update(

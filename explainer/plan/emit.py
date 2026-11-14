@@ -20,6 +20,7 @@ else in the repo is still caught.
 """
 
 import os
+import tempfile
 
 import yaml
 
@@ -84,18 +85,23 @@ def validate_output_location(output_path):
     """
     output_path = os.path.abspath(output_path)
     directory = os.path.dirname(output_path)
-    probe = output_path + ".writetest"
+    probe = None
     try:
+        if os.path.isdir(output_path):
+            raise IsADirectoryError(output_path)
         os.makedirs(directory, exist_ok=True)
-        with open(probe, "w", encoding="utf-8"):
-            pass
+        # Unique, exclusively created probe: never truncate a user companion
+        # file (or follow its symlink), even when the output already exists.
+        fd, probe = tempfile.mkstemp(prefix=".msr-write-probe-", dir=directory)
+        os.close(fd)
     except OSError as exc:
         raise EmitError(f"cannot write to output directory {directory!r}: {exc}", "io") from exc
     finally:
-        try:
-            os.remove(probe)
-        except OSError:
-            pass  # never created (the makedirs/open above already failed), or already gone
+        if probe is not None:
+            try:
+                os.remove(probe)
+            except OSError:
+                pass
 
 
 def write_storyboard(document, output_path):

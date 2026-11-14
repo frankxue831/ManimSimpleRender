@@ -347,6 +347,49 @@ class ValidateOutputLocationTests(unittest.TestCase):
     OSError handling above).
     """
 
+    def test_preserves_existing_output_and_writetest_companion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = os.path.join(directory, "story.yaml")
+            for path in (out, out + ".writetest"):
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write("keep me")
+            validate_output_location(out)
+            for path in (out, out + ".writetest"):
+                with open(path, encoding="utf-8") as handle:
+                    self.assertEqual(handle.read(), "keep me")
+            self.assertEqual(sorted(os.listdir(directory)), ["story.yaml", "story.yaml.writetest"])
+
+    def test_does_not_follow_writetest_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = os.path.join(directory, "story.yaml")
+            target = os.path.join(directory, "valuable.txt")
+            with open(target, "w", encoding="utf-8") as handle:
+                handle.write("keep me")
+            try:
+                os.symlink(target, out + ".writetest")
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks unavailable")
+            validate_output_location(out)
+            self.assertTrue(os.path.islink(out + ".writetest"))
+            with open(target, encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), "keep me")
+
+    def test_probe_creation_failure_does_not_delete_existing_companion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = os.path.join(directory, "story.yaml")
+            with open(out + ".writetest", "w", encoding="utf-8") as handle:
+                handle.write("keep me")
+            with patch("explainer.plan.emit.tempfile.mkstemp", side_effect=PermissionError):
+                with self.assertRaises(EmitError):
+                    validate_output_location(out)
+            self.assertTrue(os.path.exists(out + ".writetest"))
+
+    def test_rejects_directory_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(EmitError) as caught:
+                validate_output_location(directory)
+            self.assertEqual(caught.exception.kind, "io")
+
     def test_accepts_an_existing_writable_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             out = os.path.join(directory, "s.story.yaml")
