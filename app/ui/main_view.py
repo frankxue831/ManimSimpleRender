@@ -152,7 +152,7 @@ class MainView(QMainWindow):
         # Keyboard affordances for power/AT users (BL-21): render and cancel without
         # the mouse. Esc only fires while a render is actually running.
         self._render_shortcut = QShortcut(QKeySequence("Ctrl+Return"), self)
-        self._render_shortcut.activated.connect(self.primary_button_clicked.emit)
+        self._render_shortcut.activated.connect(self._on_primary_shortcut)
         self._cancel_shortcut = QShortcut(QKeySequence("Escape"), self)
         self._cancel_shortcut.activated.connect(self._on_escape)
 
@@ -169,6 +169,10 @@ class MainView(QMainWindow):
             self.copy_command_button,
             self.check_env_button,  # no doctor mid-render; results would interleave (B1)
         )  # open_output_button stays enabled during a render (peek at partial output)
+
+    def _on_primary_shortcut(self):
+        if self.primary_button.isEnabled():
+            self.primary_button_clicked.emit()
 
     def _on_escape(self):
         if self.primary_button.isEnabled() and self.primary_button.text() == "Cancel Render":
