@@ -6,89 +6,181 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
-### Fixed
-
-- Fall back safely when packaged configuration cannot be read or decoded.
-- Keep per-job cleanup diagnostics accurate when preparation fails before spawn.
-- Respect the primary button disabled state for Ctrl+Return.
-- Place plot-only captions below their plot instead of at the origin.
-
-- Bound actual portable ZIP inflation and reject unsupported compression methods.
-- Restrict citation reads to the source root, including resolved symlink targets.
-- Preserve existing companion files during planner output-writability probes.
-- Renew valid handoff leases during bounded error cleanup without weakening fencing.
-
 ### Added
 
-- Ordered first-use agent starter with project-context and formative pilot templates;
-  runtime preflight now precedes the control render in the quickstart.
-
-- Ordinary Scene production and recorded-video reinspection, with media checks,
-  retained inputs, frames and receipts (#16).
-- Hand-authored Netty EventLoop and TCP message-framing examples with inspection
-  timelines and font-coverage checks (#16).
-- Explicit silent-scene revisions, stable section IDs, frame evidence, guarded
-  edits and retained rollback versions (#17).
-- Portable selected-file project export, inspection, unpacking and receiving
-  preflight, including isolated trusted-launcher support (#21).
-- Caption/SRT sidecars, existing-WAV audio previews, caption-linked frame samples
-  and a JSONL agent interface over production and reinspection (#24).
-- Local task dependencies, authorization-source records, fenced claims, pull inbox
-  and audited recovery for multi-agent handoff (#25).
-- Fixed-message font-failure diagnostics and recorded-video reinspection through
-  the isolated trusted launcher (#22).
-- Render phase diagnostics, complete GUI log export, implementation fingerprints
-  and Explainer output identity records (#26).
+- **First-use starter and templates**: Add an ordered
+  [first-use starter](docs/first-use-starter.md),
+  [project record template](docs/templates/video-project.md), and
+  [first-use pilot log](docs/templates/first-use-pilot.md), and update the
+  [agent quick start](docs/agent-quickstart.md#agent-runtime-preflight) to place agent runtime
+  preflight before the [control-scene render](docs/agent-quickstart.md#prepare-a-control-scene)
+  (#42).
+- **Agent runtime preflight (`python -m app.environment --json`)**: Add a Qt-free JSON
+  preflight command reusing the Desktop GUI's **Check Environment** probes
+  (`app/environment/doctor.py`), upgrading present-but-non-runnable `ffmpeg` from `doctor.py`'s
+  GUI warning to a preflight failure, requiring `ffprobe`, reporting missing or non-runnable default
+  `Tex` tools (`latex`, `dvisvgm`) as warnings unless `--require-latex` is set, and reporting
+  interpreter-specific `recovery.manim_install_argv`, advisory `cairo`/`pangocairo` `pkg-config`
+  diagnostics, and `render_smoke_test: "not_run"`
+  ([`docs/agent-quickstart.md#agent-runtime-preflight`](docs/agent-quickstart.md#agent-runtime-preflight))
+  (#39).
+- **Scene production (`scene-production` / `python -m scene_production`)**: Add rendering
+  and recorded-video reinspection for hand-authored ordinary `Scene` projects (caller-vetted
+  Python Manim `Scene` scripts executed with caller privileges), with sequential media
+  checks, inspection timelines, retained inputs, sampled PNGs, and `result.json` receipts
+  ([`docs/scene-production.md`](docs/scene-production.md)) (#16).
+- **Dynamic examples**: Add hand-authored Netty EventLoop (`examples/scenes/netty_eventloop.py`)
+  and TCP message-framing (`examples/scenes/tcp_stream.py`) examples with inspection timelines
+  and font-coverage checks ([`docs/dynamic-examples.md`](docs/dynamic-examples.md)) (#16).
+- **Silent scene revisions (`python -m scene_production.revision`)**: Add scoped single-section
+  revisions for silent `Scene` baselines, stable section IDs, frame evidence, guarded edits,
+  retained rollback versions, an executable revision example
+  (`python -m examples.revisions.run_flow`), and opt-in `--localize-frames` changed-frame
+  localization in `audit` (`scene_production/frame_localization.py`)
+  ([`docs/scene-revision.md`](docs/scene-revision.md)) (#17, #31, #44).
+- **Portable projects (`python -m scene_production.portable`)**: Add selected-file ZIP export,
+  bundle inspection, unpacking, receiving preflight, an isolated launcher
+  (`python -I scene_production/launcher.py`, excluding the current working directory and
+  `PYTHONPATH` on untrusted project directories), and explicit `quality`/`fps` preservation in
+  `project.json` `render` settings (earlier unreleased portable consumers without `render`
+  support reject projects using that field;
+  [`docs/portable-projects.md`](docs/portable-projects.md),
+  [`docs/portable-projects.md#preserve-requested-render-settings`](docs/portable-projects.md#preserve-requested-render-settings))
+  (#21, #43).
+- **Caption sidecars and WAV audio previews (`scene_production.captions`, `scene_production.audio`)**:
+  Add Python APIs to bind explicit author frame events (`CaptionEvents` in
+  `app/render/caption_events.py`) into derived `draft.srt` sidecars (with standalone CLI
+  `python -m app.render.subtitle_draft`) and checksum-lock ("freeze") existing caller-supplied
+  PCM WAV recordings into separate narrated MP4 previews
+  ([`docs/scene-captions.md`](docs/scene-captions.md), [`docs/scene-audio.md`](docs/scene-audio.md))
+  (#24).
+- **Frame evidence (`python -m scene_production.visual_frames`) and `.[review]`**: Add
+  caption-linked decoded frame sampling (`--captions`, #24) and caption-free bounded
+  full-resolution (`native/`) decoded frame evidence with coverage indexes and labeled raster
+  contact sheets (`--from-run`, requiring `Pillow>=11` via `.[review]`;
+  [`docs/scene-frame-samples.md`](docs/scene-frame-samples.md)) (#34).
+- **Editorial review (`python -m scene_production.editorial`)**: Add `record` and `compare`
+  commands saving version-bound JSON assessments and candidate comparisons for delivered `.mp4`
+  videos ([`docs/editorial-review.md`](docs/editorial-review.md)) (#29).
+- **Agent interface (`python -m scene_production.agent`), completion reader, and `--fps`**: Add
+  a JSONL attempt wrapper over production `render` and `inspect`
+  ([`docs/scene-agent.md`](docs/scene-agent.md)), fail-closed completion reader
+  (`scene_production/completion.py`, #30), and integer `1`-`240` `--fps` (`requested_fps`,
+  intent-only, `app/render/frame_rate.py`;
+  [`docs/scene-production.md#explicit-requested-frame-rate`](docs/scene-production.md#explicit-requested-frame-rate))
+  across `scene_production`, `agent`, and `handoff` (#24, #36).
+- **Local handoff (`python -m scene_production.handoff`)**: Add opt-in SQLite worker
+  coordination over `agent.py` with immutable task dependencies, recorded user-authorization
+  evidence, fenced claims, a pollable local event inbox ("pull inbox"), and audited recovery
+  ([`docs/agent-handoff.md`](docs/agent-handoff.md)) (#25).
+- **Font failure diagnostics and isolated reinspection**: Add fixed-message `scene_font`
+  failure hints naming `render.log` in `scene-production` and `scene_production.agent`
+  ([`docs/scene-production.md#failed-scene-font-selection`](docs/scene-production.md#failed-scene-font-selection))
+  and recorded-video reinspection via `python -I scene_production/launcher.py inspect`
+  ([`docs/scene-production.md#reinspect-an-unchanged-recorded-video`](docs/scene-production.md#reinspect-an-unchanged-recorded-video))
+  (#22).
+- **Logging and output identity**: Add render phase diagnostics (`diagnostics.jsonl`), persisted
+  GUI log export (**Save Log**, marked `INCOMPLETE` for mid-run snapshots), packaged-code
+  SHA-256 fingerprints (`implementation.json`), and Explainer output identity records
+  ([`docs/logging-and-diagnostics.md`](docs/logging-and-diagnostics.md)) (#26).
+- **Runnable review and handoff examples**: Add traced silent revision review
+  (`python -m examples.silent_review.run`, [`docs/silent-review-example.md`](docs/silent-review-example.md),
+  #30), synthetic post-render composition review (`python -m examples.composed_review.run`,
+  [`docs/composed-review-example.md`](docs/composed-review-example.md), #38), and real-Manim
+  concurrent handoff regression (`python -m unittest tests.e2e.test_real_handoff`,
+  [`docs/agent-handoff.md#reproducible-real-manim-handoff-regression`](docs/agent-handoff.md#reproducible-real-manim-handoff-regression),
+  #33).
+- **Documentation**: Add [agent quick start](docs/agent-quickstart.md), task-oriented navigation
+  in the [documentation index](docs/README.md), and the [archive index](docs/archive/README.md)
+  grouping historical plans, migrations, evaluations, and reviews under `docs/archive/` (#27).
 
 ### Changed
 
-- Editorial-review writers now emit schema version 2 with a required local
-  `record_prepared_at` timestamp. Updated readers still accept strict version 1
-  records without migration or backfill, but older version 1-only readers reject
-  version 2: upgrade consumers before producing new records. Comparison output
-  adds `record_prepared_at` (null for version 1, the saved value for version 2)
-  and `timestamp_notice`; strict output-key consumers must allow these additive
-  fields. Preparation time does not establish review or publication time (#37).
-
-### Changed: render cleanup evidence and upgrades
-
-- Render results now carry `render_cleanup_state` independently of success or
-  failure: `not_started`, `complete`, or conservative `unknown` (#35). Custom
-  runners and `JobResult` producers must provide explicit, observed evidence;
-  the default or a missing/invalid field is `unknown`. Success requires
-  `complete`; `not_started` must not accompany success or a render return code.
-- Before upgrading schedulers/readers, stop new dispatches, drain older workers,
-  and reconcile their outstanding attempts using the existing handoff workflow.
-  Upgrade custom runners and workers together before resuming dispatch. Legacy
-  records remain readable, but missing cleanup evidence cannot release a render
-  slot or authorize another render. An unknown result holds its slot, halts GUI
-  batches and blocks Explainer/concept artifact publication.
-- Keep uncertain attempts and their logs for operator investigation. Do not
-  backfill `complete` from an exit code, successful media, elapsed time, a PID
-  disappearing or a GUI restart. Reconciliation is not an unsafe release or an
-  automatic retry. Use only the existing supported, audited abandonment proofs
-  in the [handoff guide](docs/agent-handoff.md#audited-abandonment-of-an-unknown-local-render);
-  no same-boot force-release or recovery shortcut is added.
+- **Render stack dependencies (`pyproject.toml`)**: The render stack upgrades pinned
+  `manim==0.22.1` and `numpy>=2.1,<3` across `.[explainer]` and `.[gui]`, upgrades
+  `manim-voiceover[gtts]==0.4.0` in `.[explainer]`, drops the `setuptools<81` constraint,
+  updates `explainer/codegen/code_compat.py` and `explainer/codegen/tts_compat.py`, enforces
+  `manim==0.22.1` at `scene_production --record-scene-frames` startup
+  (`scene_production/frame_capture.py`), and rejects unsupported `frame_trace` schema versions
+  (`scene_production/frame_trace.py`;
+  [`docs/scene-revision.md#traced-rendering-requirements`](docs/scene-revision.md#traced-rendering-requirements))
+  (#28, #32).
+- **Editorial review (`python -m scene_production.editorial`)**: Writers (`record`) now emit
+  schema version 2 with a required `record_prepared_at` canonical UTC timestamp
+  (`YYYY-MM-DDTHH:MM:SS.sssZ`, observed once from the writer's local wall clock;
+  [`docs/editorial-review.md#record-preparation-timestamp`](docs/editorial-review.md#record-preparation-timestamp)).
+  Updated readers still accept strict version 1 records without migration or backfill, whereas
+  older unreleased v1-only readers reject version 2 and must be upgraded before producing new
+  records. `compare` output adds `record_prepared_at` (`null` for version 1, saved value for
+  version 2) and `timestamp_notice`; strict output-key consumers must allow these new fields.
+  Preparation time does not establish review or publication time (#37).
+- **Render cleanup evidence (`app.render.cleanup.RenderCleanupState`)**: `JobResult` objects
+  (`app.render.runner.JobResult`) now carry `render_cleanup_state` as an explicit supervised
+  render-process/session teardown field separate from outcome inference: `not_started`,
+  `complete`, or `unknown`
+  ([`docs/scene-agent.md#render-session-cleanup-evidence`](docs/scene-agent.md#render-session-cleanup-evidence))
+  (#35). Custom runners and `JobResult` producers must provide explicit observed evidence (the
+  default or any missing/invalid value is `unknown`); `SUCCESS` requires `complete`, while
+  `not_started` in a `JobResult` requires `return_code=None` and outcome `FAILED` or
+  `MANIM_NOT_FOUND` (not `SUCCESS` or `CANCELLED`).
+- **Upgrade and publication gates (`render_cleanup_state`)**: Upgrading schedulers or readers
+  requires operators to stop new dispatches, drain older workers, reconcile outstanding
+  attempts via `scene_production.handoff reconcile`, and upgrade custom runners and workers
+  together before resuming dispatch
+  ([`docs/agent-handoff.md#cleanup-uncertainty-at-the-scheduling-boundary`](docs/agent-handoff.md#cleanup-uncertainty-at-the-scheduling-boundary)).
+  Pre-upgrade legacy records lacking `render_cleanup_state` remain readable, but missing cleanup
+  evidence cannot release `scene_production.handoff`'s exclusive active render lock
+  ("render slot") or authorize another render. An `unknown` result holds its render slot,
+  halts GUI batches, and blocks artifact publication across Explainer (raises
+  `RenderError("render_cleanup_unverified")`), [`concept_render`](docs/concept-render.md) (the
+  standalone silent concept-JSON draft workflow; writes a `status="failed"` receipt with
+  `render_cleanup_state="unknown"`), and `scene_production`/`agent` (`agent` exits `3` with
+  `status="unknown"` and `error.code="render_cleanup_unverified"`).
+- **Cleanup operator recovery (`python -m scene_production.handoff`: `reconcile`, `resolve-unknown`)**:
+  Reconciliation retains `unknown` attempts and their logs for operator investigation without
+  backfilling `complete` from exit codes, valid media, elapsed time, a disappearing PID, or a
+  GUI restart, and neither releases the render slot nor triggers an automatic retry. Audited
+  abandonment accepts only supported proofs (an unused pre-spawn launch gate `not_started` /
+  `fenced_before_spawn_intent` before `spawn_intent` is committed, or `spawn_intent` with a
+  verified `same_host_reboot`) documented in the
+  [handoff guide](docs/agent-handoff.md#audited-abandonment-of-an-unknown-local-render); no
+  same-boot force-release or recovery shortcut exists for already-spawned `unknown` attempts.
+- **Documentation**: [`README.md`](README.md), [`AGENTS.md`](AGENTS.md), and
+  [`docs/README.md`](docs/README.md) now reflect current usage, architecture boundaries, and
+  development-check instructions.
+- **Known limits (`scene_production` and `scene_production.revision`)**: Inspection timelines
+  select check timestamps; they do not drive animation, and media checks or sampled frames do
+  not establish factual correctness or full-playback acceptance
+  ([`docs/scene-production.md`](docs/scene-production.md)).
+  `python -m scene_production.revision restore` requires retained baseline and candidate runs
+  along with their media and is not a crash-atomic multi-file transaction; traced
+  `--record-scene-frames` requires `manim==0.22.1` with the Cairo renderer and is exercised in CI
+  on Linux only ([retention requirements](docs/scene-revision.md#retention-and-restore-verification);
+  [traced rendering limits](docs/scene-revision.md#traced-rendering-requirements)).
 
 ### Fixed
 
-- Generated diagram motion validates actor/path start consistency and preserves
-  destination visibility and actor layering (#23).
-
-### Known limits
-
-- Inspection timelines select checks; they do not drive animation. Media checks
-  and sampled visual review do not establish factual correctness or full-playback acceptance.
-- Revision restore requires retained baseline and candidate runs and media; it is
-  not a crash-atomic multi-file transaction. See the
-  [revision guide](docs/scene-revision.md#retention-and-restore-verification) for retention
-  requirements and [platform evidence](docs/scene-revision.md#optional-observed-frame-evidence).
-
-### Docs
-
-- Agent quick start and task-oriented documentation navigation.
-- Historical plans, migrations, evaluations and reviews grouped under `docs/archive/`.
-- Current usage, architecture status and development-check instructions refreshed.
+- **Desktop GUI (`app/config/loader.py`)**: Fall back to built-in default configuration when
+  reading or decoding packaged `app/config/config.v2.json` fails (#41).
+- **Desktop GUI (`app/ui/main_view.py`)**: Respect the primary **Start Render** / **Cancel Render**
+  button's disabled state for `Ctrl+Return` (#41).
+- **Render core (`app/render/worker.py`)**: Report `not_started` in per-job `render_cleanup_state`
+  diagnostics when job preparation fails before process spawn (#41).
+- **Explainer (`explainer/codegen/manim_codegen.py`)**: Place plot-only beat captions below
+  their plot instead of at the origin (#41).
+- **Explainer (`explainer/codegen/diagram_codegen.py`, `explainer/storyboard/model.py`)**:
+  Validate actor/path start consistency in generated diagram motion, preserve explicit
+  destination visibility, and layer guide paths behind moving actors
+  ([`docs/diagram-motion.md`](docs/diagram-motion.md)) (#23).
+- **Explainer (`explainer/cite/verifier.py`, `explainer/plan/emit.py`)**: Restrict storyboard
+  citation reads to the source root (`meta.source.repo_root`), including resolved symlink
+  targets, and use exclusive temporary writability probe files in `explainer plan` so
+  existing sibling `.staging` or `.rejected` files next to `-o` stay untouched (#40).
+- **Portable transfer (`scene_production/portable.py`)**: Bound decompressed portable ZIP
+  output instead of trusting declared entry sizes, and reject compression methods other than
+  stored/deflated (#40).
+- **Local handoff (`scene_production/handoff/runner.py`)**: Renew valid SQLite task leases
+  during bounded error cleanup without bypassing fencing checks (#40).
 
 ## [0.2.0] - 2026-10-23
 
@@ -135,7 +227,7 @@ The exit codes are 0 ok, 2 validation error, 3 citation miss, 4 render failure, 
 - `explainer plan` trims each cite to the lines its evidence covers, so generated storyboards pass
   the stricter gate (#8).
 - Evidence now reaches a cite's first and last lines. When a trim still cuts a line of code, the
-  CLI prints a `dropped line …` note instead of shortening the cite silently (#10).
+  CLI prints a `dropped line ...` note instead of shortening the cite silently (#10).
 
 ### Added
 
@@ -163,13 +255,10 @@ The exit codes are 0 ok, 2 validation error, 3 citation miss, 4 render failure, 
 - The Mac brew and MacTeX install lines are not tested in CI.
 - A "verified" badge vouches for the cited lines when the video was made, not for the narration.
 
-## [0.1.0]
+## [0.1.0] - 2026-10-15
 
 First tagged release (`6973ba4`).
 
 [Unreleased]: https://github.com/frankxue831/ManimSimpleRender/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/frankxue831/ManimSimpleRender/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/frankxue831/ManimSimpleRender/releases/tag/v0.1.0
-
-### Agent runtime preflight
-- Add a Qt-free JSON environment command reusing the GUI doctor, with interpreter-specific recovery, required ffprobe, optional default Tex requirements, and advisory build metadata checks. No render smoke test is implied.
