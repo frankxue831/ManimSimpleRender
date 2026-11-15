@@ -377,7 +377,8 @@ code remain unchanged in both cases):
   (omitting `version`, `selection`, `representative`, `visual_acceptance`, `sections`,
   and `notice`).
 
-Minimal 1-section `frame_localization` shape inside `audit` stdout JSON:
+Abbreviated 1-section `frame_localization` shape inside `audit` stdout JSON (showing
+`raw_rgba_hash` from the five `layers` keys and omitting top-level `notice`):
 
 ```json
 {
@@ -414,6 +415,12 @@ Minimal 1-section `frame_localization` shape inside `audit` stdout JSON:
             "section_offset": 10,
             "before_frame": 110,
             "after_frame": 134,
+            "pixel_layers": ["raw_rgba_hash", "decoded_rgb_md5"]
+          },
+          {
+            "section_offset": 11,
+            "before_frame": 111,
+            "after_frame": 135,
             "pixel_layers": ["raw_rgba_hash", "decoded_rgb_md5"]
           }
         ],

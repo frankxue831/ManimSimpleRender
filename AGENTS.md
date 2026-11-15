@@ -181,10 +181,15 @@ name (such as `frame-%03d.png`) inside a freshly created exclusive output `cwd` 
 
 ### Installing Dependencies
 
-Requires Python `>=3.12,<3.14` (CI tests 3.12 and 3.13) plus system prerequisites
-(`cairo`/`pango` dev headers, `ffmpeg`/`ffprobe`, `LaTeX`, and Linux Qt offscreen libs);
-see [README Quick start](README.md#quick-start) for OS media/LaTeX packages and
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) for Linux Qt offscreen packages.
+Requires Python `>=3.12,<3.14` (CI tests 3.12 and 3.13). Rendering workflows require
+`cairo`/`pango` system libraries (plus dev headers when building `pycairo` from source) and
+`ffmpeg`/`ffprobe` (`explainer verify` needs only `PyYAML`). `LaTeX` (`latex` and `dvisvgm`)
+is required only for scenes using default `Tex`/`MathTex` (including `explainer render`), not
+for ordinary `Text`-only `Scene` workflows. PyQt5 and Linux Qt offscreen libraries apply only
+to the desktop GUI (`app/`) and headless GUI tests on Linux (`scene_production`, `explainer`,
+and `concept_render` stay Qt-free). See [README Quick start](README.md#quick-start) for OS
+media/LaTeX packages and [`.github/workflows/ci.yml`](.github/workflows/ci.yml) for Linux Qt
+offscreen packages.
 
 ```bash
 python -m venv .venv
