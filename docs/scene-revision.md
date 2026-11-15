@@ -209,3 +209,45 @@ lost/corrupted, automatic re-restore refuses. Recovery then requires explicit
 manual review and recovery from the hash-checked source/timeline copies named in
 the snapshot; there is no force-restore command and original evidence must not be
 rewritten to bypass a guard.
+
+### Optional changed-frame navigation
+
+Add `--localize-frames` to `revision audit` to include a `frame_localization`
+object. Without this flag the audit output is unchanged. The existing verdict,
+classification and exit code are never replaced by localization.
+
+```bash
+python -m scene_production.revision audit --baseline versions/VERSION/snapshot.json \
+  --run candidate/result.json --target define --localize-frames
+```
+
+For each non-target section, localization separates native RGBA hashes, decoded
+RGB MD5, relative presentation times, frame durations and decoded byte sizes.
+`decoded_equal` still compares the entire decoded tuple, not only pixels.
+Ranges are half-open **section-local offsets**; add the respective
+`before_frames[0]` or `after_frames[0]` to map them to source video ordinals.
+Different-length sections are explicitly unpaired, not zipped or time-warped.
+The report carries the exact rational `frame_rate` and overall
+`inspection_alignment`; false means declared inspection windows disagree with
+observed trace bounds, even though ordinal navigation may still be available.
+
+Up to six deterministic pixel-change sample candidates per section are chosen
+from first/middle/last changed offsets in each pixel layer, deduplicated. At most
+12 paired samples are returned across the audit, allocated round-robin only
+among pixel-eligible sections in manifest order. Timing/size-only changes receive
+numeric diagnostics, not visual sample hints. Omitted candidates are counted.
+These are navigation hints, not representative frames, severity scores or
+semantic approval. Target sections remain outside this audit's comparison scope.
+
+Use each sample's `before_frame` / `after_frame` with the corresponding original
+run's existing `visual_frames --from-run ... --frames ...` exporter. Its decoded
+PNG evidence and independent budgets still apply. Raw trace hashes do not supply
+pre-encoding PNGs. Exporting is separate and never happens automatically.
+
+At most 64 ranges per layer and 256 total ranges are retained; exact changed and
+range counts remain available with explicit truncation flags. The new report is
+limited to 512 sections and 256 KiB; exceeding these yields
+`unavailable_resource_limit`, not a false unchanged result. Existing trace/input
+limits and audit decode costs remain unchanged. Localization adds no rendering,
+decoding, media writes or provider calls. Hash differences alone say nothing
+about whether a viewer notices a difference or whether a revision is acceptable.
