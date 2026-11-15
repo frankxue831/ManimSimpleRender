@@ -110,7 +110,7 @@ jobs:
       - name: Real-Manim compatibility (code, video, voiceover, frame tracing)
         run: |
           source .venv/bin/activate
-          python -m unittest tests.explainer_tests.test_code_compat tests.e2e.test_real_render_smoke tests.test_frame_capture_process
+          python -m unittest tests.explainer_tests.test_code_compat tests.e2e.test_real_render_smoke tests.test_frame_capture_process tests.test_portable_render_process
 
       - name: Public explicit FPS fixture (API and agent, native trace and audit)
         env:
