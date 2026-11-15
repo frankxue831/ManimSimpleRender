@@ -15,6 +15,9 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- Ordered first-use agent starter with project-context and formative pilot templates;
+  runtime preflight now precedes the control render in the quickstart.
+
 - Ordinary Scene production and recorded-video reinspection, with media checks,
   retained inputs, frames and receipts (#16).
 - Hand-authored Netty EventLoop and TCP message-framing examples with inspection

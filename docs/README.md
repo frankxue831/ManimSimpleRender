@@ -1,6 +1,7 @@
 # Documentation
 
-Agents should start with the [agent quick start](agent-quickstart.md). For installation,
+For a new video project, start with the [first-use starter](first-use-starter.md).
+For the render interface alone, use the [agent quick start](agent-quickstart.md). For installation,
 the desktop application and Explainer's first example, see the [project README](../README.md).
 
 ## Choose a workflow

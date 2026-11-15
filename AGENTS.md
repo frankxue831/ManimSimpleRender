@@ -8,7 +8,7 @@ ManimSimpleRender provides a desktop batch renderer and command-line workflows f
 
 These workflows share one Qt-free render core (`app/render`), per `docs/adr/0001-render-core-boundary.md`. `explainer/` may import only `app.render.*` (never `app.render.worker`); nothing imports back from it. The boundary is enforced by `tests/test_architecture.py`. `concept_render/`, a smaller source-checkout-only CLI for silent concept drafts (`docs/concept-render.md`), also imports `app.render`; `tests/test_architecture.py` does not scan it. `scene_production/` renders trusted ordinary scenes and checks media; its Qt-free imports are guarded by the same test file.
 
-For tool selection, see the [documentation index](docs/README.md). Agents invoking
+For tool selection, see the [documentation index](docs/README.md). For a new idea-to-delivery project, use the [first-use starter](docs/first-use-starter.md). Agents invoking
 renders should start with the [agent quick start](docs/agent-quickstart.md), then
 read the [protocol reference](docs/scene-agent.md) for completion and recovery rules.
 
