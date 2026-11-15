@@ -32,6 +32,16 @@ class MainViewSmokeTests(unittest.TestCase):
     def tearDown(self):
         self.view.deleteLater()
 
+    def test_render_shortcut_obeys_primary_button_enabled_state(self):
+        calls = []
+        self.view.primary_button_clicked.connect(lambda: calls.append(True))
+        self.view.primary_button.setEnabled(False)
+        self.view._render_shortcut.activated.emit()
+        self.assertEqual(calls, [])
+        self.view.primary_button.setEnabled(True)
+        self.view._render_shortcut.activated.emit()
+        self.assertEqual(calls, [True])
+
     def test_window_title_preserved(self):
         self.assertEqual(self.view.windowTitle(), "Manim Simple Render")
 

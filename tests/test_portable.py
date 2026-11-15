@@ -58,6 +58,58 @@ class PortableTests(unittest.TestCase):
         self.assertEqual((dest / "scene.py").read_text(), "# ordinary trusted source\n")
         self.assertFalse((dest / "unselected.txt").exists())
 
+    def test_legacy_recipe_retains_default(self):
+        argv = self.export()["commands"]["render"]
+        self.assertEqual(argv[argv.index("--quality") + 1], "qm")
+        self.assertNotIn("--fps", argv)
+
+    def test_explicit_settings_survive_export_inspect_unpack_and_reexport(self):
+        from scene_production import portable
+
+        self.spec["render"] = {"quality": "ql", "fps": 24}
+        first = self.export()
+        self.assertEqual(
+            portable.inspect_bundle(self.archive)["project"]["render"], self.spec["render"]
+        )
+        dest = self.root / "received"
+        portable.unpack_bundle(self.archive, dest)
+        second = portable.export_project(dest / "project.json", self.root / "second.zip")
+        argv = second["commands"]["render"]
+        self.assertEqual(argv, first["commands"]["render"])
+        self.assertEqual(argv[argv.index("--quality") + 1], "ql")
+        self.assertEqual(argv[argv.index("--fps") + 1], "24")
+        self.assertEqual(argv[:3], ["python", "-I", "<TRUSTED_LAUNCHER>"])
+
+    def test_quality_only_and_null_fps_do_not_request_override(self):
+        for settings in [{"quality": "qh"}, {"quality": "qk", "fps": None}]:
+            with self.subTest(settings=settings):
+                self.spec["render"] = settings
+                argv = self.export()["commands"]["render"]
+                self.assertEqual(argv[argv.index("--quality") + 1], settings["quality"])
+                self.assertNotIn("--fps", argv)
+                self.archive.unlink()
+
+    def test_invalid_render_settings_refused_before_archive_creation(self):
+        for settings in [
+            None,
+            {},
+            [],
+            {"quality": "-ql"},
+            {"quality": "invalid"},
+            {"quality": True},
+            {"quality": "qm", "fps": True},
+            {"quality": "qm", "fps": 0},
+            {"quality": "qm", "fps": 241},
+            {"quality": "qm", "fps": 29.97},
+            {"quality": "qm", "fps": "24"},
+            {"quality": "qm", "extra_args": ["--config_file", "bad"]},
+        ]:
+            with self.subTest(settings=settings):
+                self.spec["render"] = settings
+                with self.assertRaises(ValueError):
+                    self.export()
+                self.assertFalse(self.archive.exists())
+
     def test_cache_secret_and_symlink_inputs_refused(self):
         for relative in [".env", "__pycache__/x.pyc", "secret.pem"]:
             with self.subTest(relative=relative):

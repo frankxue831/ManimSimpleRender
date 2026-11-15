@@ -362,6 +362,33 @@ class WorkerLogAndResultTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(json.loads(result.stdout), {"mode": mode, "helper_stopped": True})
 
+    def test_preparation_failure_does_not_reuse_previous_cleanup_state(self):
+        from app.render.command_builder import build_command
+
+        jobs = [RenderJob("a.py", "A"), RenderJob("b.py", "B")]
+        runner = FakeRunner()
+        summaries = []
+        with tempfile.TemporaryDirectory() as out:
+            worker = RenderWorker(jobs, "-ql", "", out, runner=runner)
+            paths = []
+            worker.log_file_ready.connect(paths.append)
+            worker.finished_summary.connect(summaries.append)
+
+            def build(job, *args, **kwargs):
+                if job == jobs[1]:
+                    raise ValueError("preparation failed")
+                return build_command(job, *args, **kwargs)
+
+            with mock.patch("app.render.worker.build_command", side_effect=build):
+                worker.run()
+            lines = Path(paths[0]).read_text().splitlines()
+        events = [json.loads(line.split("] ", 1)[1]) for line in lines if "] {" in line]
+        results = [event for event in events if event["event"] == "job_finished"]
+        self.assertEqual(len(runner.calls), 1)
+        self.assertEqual([r["render_cleanup_state"] for r in results], ["complete", "not_started"])
+        self.assertEqual([r["outcome"] for r in results], ["success", "failed"])
+        self.assertFalse(summaries[0].cleanup_unknown)
+
     def test_lifecycle_identifies_attempted_and_skipped_jobs(self):
         jobs = [RenderJob("a.py", "A"), RenderJob("b.py", "B")]
         with tempfile.TemporaryDirectory() as out:

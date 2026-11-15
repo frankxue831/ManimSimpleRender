@@ -59,6 +59,8 @@ def load_config(path=None):
         raise ConfigError(f"Config file not found: {config_path}") from exc
     except json.JSONDecodeError as exc:
         raise ConfigError(f"Config file is not valid JSON ({config_path}): {exc}") from exc
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ConfigError(f"Config file could not be read ({config_path}): {exc}") from exc
     return _parse(raw, config_path)
 
 

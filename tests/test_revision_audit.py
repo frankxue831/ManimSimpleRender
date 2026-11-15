@@ -67,6 +67,44 @@ class RevisionAuditTests(unittest.TestCase):
         self.attach(p, counts, values)
         return base, p
 
+    def test_opt_in_preserves_original_result_and_tuple_semantics(self):
+        base, p = self.candidate()
+        same = [("0", "1/30", "size", "same")] * 30
+        duration_changed = [("0", "2/30", "size", "same")] * 30
+
+        def result(enabled):
+            with patch.object(
+                rev, "frame_sequence", side_effect=[same, same, same, duration_changed]
+            ):
+                return rev.audit(base, p, ["target"], localize_frames=enabled)
+
+        original, enhanced = result(False), result(True)
+        detail = enhanced.pop("frame_localization")
+        self.assertEqual(original, enhanced)
+        self.assertNotIn("frame_localization", original)
+        self.assertEqual(original["status"], "needs_review")
+        self.assertEqual(original["sections"][-1]["classification"], "encoded_output_changed")
+        self.assertFalse(original["sections"][-1]["decoded_equal"])
+        self.assertEqual(detail["sections"][-1]["samples"], [])
+        self.assertEqual(detail["sections"][-1]["layers"]["decoded_duration"]["changed_count"], 30)
+
+    def test_localization_carries_rate_and_failed_inspection_alignment(self):
+        base, p = self.candidate()
+        self.attach(p, [29, 31, 30], [b"A", b"D", b"C"])
+
+        def frames(video, start, end, fps):
+            return [("0", "1/30", "size", "same")] * int((end - start) * fps)
+
+        with patch.object(rev, "frame_sequence", side_effect=frames):
+            result = rev.audit(base, p, ["target"], localize_frames=True)
+        self.assertFalse(result["inspection_windows_agree"])
+        self.assertEqual(result["status"], "needs_review")
+        self.assertFalse(result["frame_localization"]["inspection_alignment"])
+        self.assertEqual(result["frame_localization"]["frame_rate"], "30/1")
+        self.assertEqual(
+            result["frame_localization"]["sections"][0]["alignment"], "unavailable_count_changed"
+        )
+
     def test_target_duration_shift_maps_unchanged_tail_by_native_id(self):
         base, p = self.candidate([30, 45, 30])
 

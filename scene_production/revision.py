@@ -597,7 +597,7 @@ def _inspection_alignment(segments, trace):
     return result
 
 
-def audit(snapshot, candidate_receipt, targets):
+def audit(snapshot, candidate_receipt, targets, *, localize_frames=False):
     """Keep exact source/raw/timing/decoded layers separate, never infer meaning."""
     b, path, old, new, now, rate = _media_pair(snapshot, candidate_receipt, targets)
     before = _raw_trace(old)
@@ -609,6 +609,9 @@ def audit(snapshot, candidate_receipt, targets):
         after["frame_rate"]
     ):
         raise ValueError("raw trace geometry or frame rate changed")
+    from .frame_localization import Localization
+
+    localization = Localization() if localize_frames else None
     sections = []
     for a, z in zip(before["sections"], after["sections"]):
         if a["id"] in targets:
@@ -623,6 +626,8 @@ def audit(snapshot, candidate_receipt, targets):
         decoded_new = frame_sequence(
             new["video"], Fraction(z["start_frame"], rate), Fraction(z["end_frame"], rate), rate
         )
+        if localization is not None:
+            localization.add(a, z, old_frames, new_frames, decoded_old, decoded_new)
         decoded_equal = decoded_old == decoded_new
         if not timing_equal:
             classification = "timing_changed"
@@ -653,7 +658,7 @@ def audit(snapshot, candidate_receipt, targets):
     final = _media_pair(snapshot, candidate_receipt, targets)
     if final != (b, path, old, new, now, rate):
         raise ValueError("comparison inputs changed during decoding")
-    return {
+    result = {
         "status": "unchanged_non_target" if unchanged and aligned else "needs_review",
         "baseline": {
             "snapshot": str(path),
@@ -684,6 +689,13 @@ def audit(snapshot, candidate_receipt, targets):
             "layout, or user understanding."
         ),
     }
+
+    if localization is not None:
+        result["frame_localization"] = localization.finish(
+            frame_rate=f"{rate.numerator}/{rate.denominator}",
+            inspection_alignment=aligned,
+        )
+    return result
 
 
 def restore(snapshot, current_receipt):
@@ -731,6 +743,7 @@ def main():
     audit_parser.add_argument("--baseline", required=True)
     audit_parser.add_argument("--run", required=True)
     audit_parser.add_argument("--target", required=True)
+    audit_parser.add_argument("--localize-frames", action="store_true")
     r = sub.add_parser("restore")
     r.add_argument("--baseline", required=True)
     r.add_argument("--run", required=True)
@@ -745,7 +758,9 @@ def main():
         elif args.action == "verify":
             result = verify(args.baseline, args.run, [args.target])
         elif args.action == "audit":
-            result = audit(args.baseline, args.run, [args.target])
+            result = audit(
+                args.baseline, args.run, [args.target], localize_frames=args.localize_frames
+            )
         else:
             result = restore(args.baseline, args.run)
         print(json.dumps(result, ensure_ascii=False, indent=2))

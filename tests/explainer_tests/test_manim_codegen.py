@@ -246,6 +246,15 @@ class CodegenTests(unittest.TestCase):
             ),
         )
 
+    def test_plot_only_caption_is_arranged_below_plot_before_reveal(self):
+        sb = self._plot_beat()
+        sb = dataclasses.replace(sb, beats=(dataclasses.replace(sb.beats[0], caption="Caption"),))
+        src = generate_scene(sb)
+        placement = "content = VGroup(plot_group, caption).arrange(DOWN, buff=0.5)"
+        self.assertIn(placement, src)
+        self.assertLess(src.index(placement), src.index("self.play(Create(axes)"))
+        compile(src, "<plot-caption>", "exec")
+
     def test_region_without_narration_highlights_without_voiceover(self):
         # A highlight-only region (empty narration) must NOT wrap its play in a
         # voiceover block: that would send an empty string to gTTS at render time.

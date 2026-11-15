@@ -8,12 +8,20 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
+- Fall back safely when packaged configuration cannot be read or decoded.
+- Keep per-job cleanup diagnostics accurate when preparation fails before spawn.
+- Respect the primary button disabled state for Ctrl+Return.
+- Place plot-only captions below their plot instead of at the origin.
+
 - Bound actual portable ZIP inflation and reject unsupported compression methods.
 - Restrict citation reads to the source root, including resolved symlink targets.
 - Preserve existing companion files during planner output-writability probes.
 - Renew valid handoff leases during bounded error cleanup without weakening fencing.
 
 ### Added
+
+- Ordered first-use agent starter with project-context and formative pilot templates;
+  runtime preflight now precedes the control render in the quickstart.
 
 - Ordinary Scene production and recorded-video reinspection, with media checks,
   retained inputs, frames and receipts (#16).

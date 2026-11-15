@@ -22,6 +22,9 @@ import unicodedata
 import zipfile
 import zlib
 
+from app.render.frame_rate import validate_fps
+from app.render.quality import known_quality_flags
+
 from . import pairs
 
 MAX_FILES = 128
@@ -111,8 +114,24 @@ def _requirements(req):
         raise ValueError("tools are executable names, not paths or commands")
 
 
+def _render_settings(spec):
+    """Explicit requests only; never infer settings from untrusted run receipts."""
+    settings = spec.get("render", {"quality": "qm"})
+    if (
+        not isinstance(settings, dict)
+        or "quality" not in settings
+        or set(settings) - {"quality", "fps"}
+    ):
+        raise ValueError("render needs quality and optional fps only")
+    quality = settings["quality"]
+    if not isinstance(quality, str) or quality not in {flag[1:] for flag in known_quality_flags()}:
+        raise ValueError("render quality must be ql, qm, qh, qp or qk")
+    validate_fps(settings.get("fps"))
+    return settings
+
+
 def _project(spec):
-    if not isinstance(spec, dict) or set(spec) != {
+    if not isinstance(spec, dict) or set(spec) - {"render"} != {
         "version",
         "name",
         "manifest",
@@ -144,6 +163,7 @@ def _project(spec):
     if spec["manifest"] not in [f["path"] for f in files]:
         raise ValueError("select the revision manifest as an input")
     _requirements(spec["requirements"])
+    _render_settings(spec)
 
 
 def _sha(raw):
@@ -213,6 +233,7 @@ def export_project(spec_path, output):
     if sum(map(len, contents.values())) > MAX_TOTAL_BYTES:
         raise ValueError("selected inputs exceed 64 MiB")
     entry = _closure(spec, contents)
+    settings = _render_settings(spec)
     handoff = {
         "version": 1,
         "project": spec,
@@ -250,7 +271,8 @@ def export_project(spec_path, output):
                 "--output-dir",
                 "runs",
                 "--quality",
-                "qm",
+                settings["quality"],
+                *(["--fps", str(settings["fps"])] if settings.get("fps") is not None else []),
                 "--record-scene-frames",
             ],
             "revision_manifest": spec["manifest"],
