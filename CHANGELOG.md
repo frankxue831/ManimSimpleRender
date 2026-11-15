@@ -6,6 +6,13 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Bound actual portable ZIP inflation and reject unsupported compression methods.
+- Restrict citation reads to the source root, including resolved symlink targets.
+- Preserve existing companion files during planner output-writability probes.
+- Renew valid handoff leases during bounded error cleanup without weakening fencing.
+
 ### Added
 
 - Ordinary Scene production and recorded-video reinspection, with media checks,
@@ -155,3 +162,6 @@ First tagged release (`6973ba4`).
 [Unreleased]: https://github.com/frankxue831/ManimSimpleRender/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/frankxue831/ManimSimpleRender/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/frankxue831/ManimSimpleRender/releases/tag/v0.1.0
+
+### Agent runtime preflight
+- Add a Qt-free JSON environment command reusing the GUI doctor, with interpreter-specific recovery, required ffprobe, optional default Tex requirements, and advisory build metadata checks. No render smoke test is implied.

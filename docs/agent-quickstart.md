@@ -214,3 +214,30 @@ If your final video contains footage added after Manim rendering, its raw-scene
 review does not cover the final composite. See the [synthetic composition
 example](composed-review-example.md) for separate identities, assembly provenance,
 protected moving-footage comparisons, and final-video review records.
+
+## Agent runtime preflight
+
+Before rendering, run the check with the same Python interpreter you will use
+for production:
+
+```bash
+python -m app.environment --json
+# If the scene uses default Tex/MathTex:
+python -m app.environment --json --require-latex
+```
+
+Exit 0 means the version/import probes passed, 1 means a runtime blocker, and
+2 means invalid CLI usage. The JSON includes the exact interpreter, blockers,
+and installation argv for that interpreter. It installs nothing. If the wrong
+virtual environment was selected, select the intended one and run again.
+
+This ordinary Scene check requires runnable Manim, FFmpeg and ffprobe. Default
+Tex additionally needs latex and dvisvgm; pdflatex alone is insufficient. Cairo
+and Pango build metadata is advisory: missing headers may prevent installation
+but do not prove an existing runtime cannot render. See README prerequisites
+before attempting installation. GUI check semantics remain unchanged.
+
+A successful probe is not a render or editorial acceptance: JSON explicitly
+reports `render_smoke_test: not_run`. Run the small control above afterward.
+The check does not validate fonts, codecs, external assets, voice providers,
+OpenGL, or arbitrary custom TeX templates.

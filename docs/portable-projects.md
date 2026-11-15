@@ -83,3 +83,8 @@ Traced rendering also launches its existing capture helper through the trusted
 FILE launcher with `-I`, so an unpacked trusted tool does not need installation
 for its child to find the package. Installed Manim imports resolve before the
 explicitly trusted source/helper directory; this remains code execution, not a sandbox.
+
+Only stored and DEFLATE-compressed entries are supported. Import caps actual
+DEFLATE output before accepting it, checks the complete stream, size and CRC,
+and rejects BZIP2/LZMA or other codecs before decoding. Declared ZIP entry sizes
+are not trusted as decompression limits. Existing MSR exports use DEFLATE.
