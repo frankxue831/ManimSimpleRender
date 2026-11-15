@@ -8,8 +8,9 @@ import json
 import os
 import tempfile
 import unittest
+from unittest import mock
 
-from app.config.loader import default_config, load_config
+from app.config.loader import default_config, load_config, load_config_or_default
 from app.config.models import (
     AppConfig,
     ConfigError,
@@ -248,6 +249,25 @@ class DefaultConfigLadderTests(unittest.TestCase):
             flags.issubset(known_quality_flags()),
             f"default_config flags {sorted(flags)} not all in ladder",
         )
+
+
+class ConfigReadFailureTests(unittest.TestCase):
+    def test_read_failures_are_typed_and_packaged_fallback_is_preserved(self):
+        errors = [
+            PermissionError("denied"),
+            IsADirectoryError("directory"),
+            UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid"),
+        ]
+        for error in errors:
+            with self.subTest(error=type(error).__name__):
+                with mock.patch("builtins.open", side_effect=error):
+                    with self.assertRaises(ConfigError) as raised:
+                        load_config("explicit.json")
+                    self.assertIs(raised.exception.__cause__, error)
+                    with self.assertLogs("app.config.loader", level="WARNING"):
+                        self.assertEqual(load_config_or_default(), default_config())
+                    with self.assertRaises(ConfigError):
+                        load_config_or_default("explicit.json")
 
 
 if __name__ == "__main__":

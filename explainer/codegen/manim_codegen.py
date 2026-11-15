@@ -460,7 +460,11 @@ def _emit_beat(beat, storyboard):
         out.append(f"{INDENT}content = VGroup({', '.join(members)}).arrange(DOWN, buff=0.5)")
         out.append(f"{INDENT}content.move_to(DOWN * 0.25)")
     elif has_plot:
-        out.append(f"{INDENT}plot_group.move_to(DOWN * 0.1)")
+        if beat.caption:
+            out.append(f"{INDENT}content = VGroup(plot_group, caption).arrange(DOWN, buff=0.5)")
+            out.append(f"{INDENT}content.move_to(DOWN * 0.1)")
+        else:
+            out.append(f"{INDENT}plot_group.move_to(DOWN * 0.1)")
     elif has_code:
         # code-only canvas: center the code block (plus caption, if any).
         if beat.caption:

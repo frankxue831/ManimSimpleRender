@@ -230,6 +230,7 @@ class RenderWorker(QThread):
             self._flush_thread.start()
             for index, job in enumerate(self._jobs):
                 active_index = index
+                render_state = RenderCleanupState.NOT_STARTED
                 if self._cancel.is_set():
                     # Record every remaining (unstarted) job as cancelled so the
                     # terminal summary reflects them instead of silently dropping them.
