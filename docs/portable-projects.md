@@ -88,3 +88,28 @@ Only stored and DEFLATE-compressed entries are supported. Import caps actual
 DEFLATE output before accepting it, checks the complete stream, size and CRC,
 and rejects BZIP2/LZMA or other codecs before decoding. Declared ZIP entry sizes
 are not trusted as decompression limits. Existing MSR exports use DEFLATE.
+
+## Preserve requested render settings
+
+An optional `render` object in `project.json` records the author's requested
+settings, for example `"render": {"quality": "ql", "fps": 24}`. Quality is required
+when this object is present: `ql`, `qm`, `qh`, `qp` or `qk`. FPS is optional (or
+`null`), otherwise an integer from 1 to 240, matching the production API. No
+arbitrary command arguments are accepted. Export validates these values and
+includes `--quality` and, when specified, `--fps` in the generated recipe.
+Inspection, unpacking and re-export preserve them.
+
+Existing version-1 projects without `render` retain the legacy recipe: `qm` and
+no FPS override. That default is **not** inferred from the previous video. Authors
+must explicitly record nondefault settings before export, especially when scene
+code uses frame counts or timeline durations rely on a particular frame rate.
+Quality normally chooses both resolution and a default frame rate; an explicit
+FPS request overrides that rate. Receipts and observed media remain the evidence
+of what actually rendered; requested settings are not proof of matching pixels.
+
+This additive version-1 field requires an updated receiving MSR. Older tools
+reject projects containing it rather than silently ignoring it. Do not remove it
+to bypass that rejection; update the trusted product or deliberately review and
+recreate the render recipe. This does not bundle Manim configuration, fonts,
+renderer selection or arbitrary environment settings. Recipes remain unsigned
+advice to inspect, never automatically executed during import.
