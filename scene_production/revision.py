@@ -189,9 +189,10 @@ def rendered_scene(receipt):
     return command[positions[0] + 1]
 
 
-def capture(manifest_path, receipt_path, store):
+def capture(manifest_path, receipt_path, store, *, require_aligned=False):
     m, path, files, deps, timeline = manifest(manifest_path)
     r = recorded(receipt_path)
+    observed = None
     if "frame_trace" in r:
         observed = _raw_trace(r)
         if [v["id"] for v in observed["sections"]] != [v["id"] for v in m["segments"]]:
@@ -203,6 +204,27 @@ def capture(manifest_path, receipt_path, store):
         or digest(files["timeline"]) != r["timeline_sha256"]
     ):
         raise ValueError("current inputs disagree with recorded render")
+    if require_aligned:
+        if observed is None:
+            raise ValueError(
+                "aligned capture requires a native frame trace; render a fresh canonical "
+                "baseline with --record-scene-frames"
+            )
+        mismatches = [
+            s for s in _inspection_alignment(timeline["segments"], observed) if not s["equal"]
+        ]
+        if mismatches:
+            detail = "; ".join(
+                f"{s['id']}: declared {s['declared_frames']}, observed {s['observed_frames']}"
+                for s in mismatches
+            )
+            raise ValueError(
+                "inspection windows disagree with native sections: "
+                + detail
+                + ". Author a timeline matching the observed bounds, then render a fresh "
+                "canonical baseline before capture; do not edit receipts or substitute "
+                "a reinspection receipt."
+            )
     tracked = [path, *files.values(), *deps]
     state = {str(p): digest(p) for p in tracked}
     root = Path(store).resolve()
@@ -727,6 +749,11 @@ def main():
     c.add_argument("--manifest", required=True)
     c.add_argument("--run", required=True)
     c.add_argument("--store", required=True)
+    c.add_argument(
+        "--require-aligned",
+        action="store_true",
+        help="Require traced native sections to match inspection windows before capture",
+    )
     locator = sub.add_parser("locate")
     locator.add_argument("--baseline", required=True)
     locator.add_argument("--target", required=True)
@@ -750,7 +777,11 @@ def main():
     args = p.parse_args()
     try:
         if args.action == "capture":
-            result = {"snapshot": capture(args.manifest, args.run, args.store)}
+            result = {
+                "snapshot": capture(
+                    args.manifest, args.run, args.store, require_aligned=args.require_aligned
+                )
+            }
         elif args.action == "locate":
             result = locate(args.baseline, args.target, args.feedback, args.acknowledge)
         elif args.action == "apply":
