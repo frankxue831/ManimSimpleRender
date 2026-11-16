@@ -8,6 +8,10 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- **Opt-in aligned revision capture**: `scene_production.revision capture
+  --require-aligned` requires native section traces and matching inspection
+  windows before creating a version snapshot. Default capture behavior and
+  audit verdicts are unchanged; see [existing production preparation](docs/scene-revision.md#preparing-an-existing-production).
 - **First-use starter and templates**: Add an ordered
   [first-use starter](docs/first-use-starter.md),
   [project record template](docs/templates/video-project.md), and

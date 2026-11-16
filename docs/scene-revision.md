@@ -90,9 +90,54 @@ limits; timelines configure inspection checks, not animation timing):
 
 ## Revision workflow and edit rules
 
+### Preparing an existing production
+
+A successful ordinary render is not necessarily a revision baseline. Before
+editing a delivered production, retain its original run and source separately:
+
+1. In a working copy, add paired source markers and an authored manifest. Declare
+   local data files as dependencies as well as Python helpers, and record objects
+   carried between sections. A global-time caption updater can couple later
+   sections even when the visible edit is local.
+2. Render a fresh baseline with `--record-scene-frames`. Adding comments changes
+   source identity; never attach the instrumented source to the old receipt.
+   Reinspection cannot manufacture historical native-frame observations.
+3. Use `capture --require-aligned` before making a candidate. This opt-in check
+   requires a validated native trace and compares every declared inspection
+   window with its observed section frame bounds, using the same eight-ULP
+   decimal-coordinate tolerance as `audit`. It refuses misalignment before
+   creating the version store or snapshot. The error names the section IDs and
+   declared/observed frame bounds.
+4. If the check refuses, preserve that probe. Author an inspection timeline from
+   the observed bounds, retaining suitable inspection points, then render a fresh
+   canonical baseline with those inputs before capture. Do not rewrite receipts
+   or substitute a reinspection receipt. Alternatively, explicitly revise the
+   Scene's timing and validate that as additional baseline preparation. A frozen
+   frame hold pauses updaters, so it is not a neutral replacement for a captioned
+   `wait`.
+
+Count instrumentation, dependency mapping, alignment repair and setup renders as
+workflow work; do not report only the final bounded edit. An aligned snapshot
+does not establish protected-frame equality for a later candidate, visual
+acceptance, or correspondence with the original delivered picture. Those require
+separate checks. For an independent exercise, label any invented edit synthetic
+and give the receiving agent only the bundle, environment instructions and task;
+do not represent it as viewer feedback.
+
+Without `--require-aligned`, capture retains its existing behavior, including
+untraced captures and traced windows whose alignment is reviewed later. The
+Python API is `capture(manifest_path, receipt_path, store, *, require_aligned=False)`;
+the opt-in flag does not change snapshot format or audit verdicts.
+
+### Render, capture and revise
+
 Run from an environment with Manim, `ffmpeg`, and `ffprobe` installed (include
 `--record-scene-frames` on both renders if you will run `audit`; `verify` runs
 with or without raw traces):
+
+The commands below show the traced `audit` path. For intentional untraced
+`verify`, omit both render `--record-scene-frames` flags and capture's
+`--require-aligned` flag.
 
 ```sh
 # 1. Render baseline run -> creates runs/baseline/scene-RUN/result.json
@@ -101,7 +146,7 @@ python -m scene_production --scene-file scene.py --scene Demo \
 
 # 2. Capture immutable baseline snapshot -> prints {"snapshot": ".../snapshot.json"}
 python -m scene_production.revision capture --manifest manifest.json \
-  --run runs/baseline/scene-RUN/result.json --store versions
+  --run runs/baseline/scene-RUN/result.json --store versions --require-aligned
 
 # 3. Locate target context and check transitive depends_on dependents -> plan.json
 python -m scene_production.revision locate \
